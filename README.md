@@ -3,6 +3,7 @@ This is the TensorFlow implementation of a recursive neural network model.
 It's designed to work with data structures defined by https://github.com/ofirnachum/tree_rnn.
 
 # Example changes to test this model in sentiment.py
+```
 #Initialize a model:
 config = tf_rnn.Config(
     embedding_dimension=EMB_DIM,
@@ -14,9 +15,11 @@ config = tf_rnn.Config(
 model = tf_rnn.RNN(config)
 model.sess = tf.Session()
 model.sess.run(tf.initialize_all_variables())
-
+```
+```
 #Load word embeddings
 embeddings = model.sess.run(model.L)
 ## codes that fill in embeddings ## 
 update = model.L.assign(embeddings)
 model.sess.run(update)
+```
