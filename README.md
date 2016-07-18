@@ -2,7 +2,7 @@
 This is the TensorFlow implementation of a recursive neural network model.
 It's designed to work with data structures defined by https://github.com/ofirnachum/tree_rnn.
 
-# Test this model on stanford sentiment dataset
+# Usage and testing of the model on stanford sentiment dataset
 
 Edit sentiment.py
 ```python
@@ -34,5 +34,5 @@ Expected Results
 ```
 Each epoch should take under 2 to 3 minutes.
 82% accuracy on coarse-grained sentiment data
-40% accuracy on find-grained sentiment data
+41% accuracy on find-grained sentiment data
 ```
