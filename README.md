@@ -2,7 +2,7 @@
 This is the TensorFlow implementation of a recursive neural network model.
 It's designed to work with data structures defined by https://github.com/ofirnachum/tree_rnn.
 
-# Test this model in stanford sentiment dataset
+# Test this model on stanford sentiment dataset
 
 Edit sentiment.py
 ```python
