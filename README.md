@@ -33,6 +33,9 @@ model.sess.run(update)
 Expected Results
 ```
 Each epoch should take 2 to 3 minutes.
-82% accuracy on coarse-grained sentiment data
-41% accuracy on find-grained sentiment data
+Coarse-grained sentiment data
+    82% accuracy (concatenated children)
+Find-grained sentiment data
+    41% accuracy (concatenated children)
+    43% accuracy (summed children)
 ```
