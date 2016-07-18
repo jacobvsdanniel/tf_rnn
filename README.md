@@ -26,5 +26,7 @@ update = model.L.assign(embeddings)
 model.sess.run(update)
 ```
 Result should be
-    82% accuracy on coarse-grained sentiment data
-    40% accuracy on find-grained sentiment data
+```
+82% accuracy on coarse-grained sentiment data
+40% accuracy on find-grained sentiment data
+```
