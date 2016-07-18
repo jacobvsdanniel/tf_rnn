@@ -7,7 +7,7 @@ class Config(object):
     """
     def __init__(self, vocabulary_size=5, embedding_dimension=4, hidden_dimension=3,
                  output_dimension=2, degree=2,
-                 learning_rate=0.01, momentum=0.9, patience=3):
+                 learning_rate=0.001, momentum=0.9, patience=3):
         self.vocabulary_size = vocabulary_size
         self.embedding_dimension = embedding_dimension
         self.hidden_dimension = hidden_dimension
@@ -15,7 +15,7 @@ class Config(object):
         self.degree = degree
         self.learning_rate = learning_rate
         self.momentum = momentum
-        #self.patience = patience
+        self.patience = patience
         return
         
 class RNN(object):
@@ -55,7 +55,11 @@ class RNN(object):
         self.X = tf.gather(L_hat, x_hat)
         return
     
-    def create_hidden_unit(self):
+    def create_hidden_unit_backup(self):
+        """ Create a reusable graph for computing node hidden features
+        
+        Childiren's vector are concatenated.
+        """
         with tf.variable_scope("RNN", initializer=tf.random_normal_initializer(stddev=0.1)):
             self.W_hx = tf.get_variable("W_hx",
                                         [self.config.hidden_dimension,
@@ -72,11 +76,33 @@ class RNN(object):
         
         self.f_h = hidden_unit
         return
+        
+    def create_hidden_unit(self):
+        """ Create a reusable graph for computing node hidden features
+        
+        Childiren's vector are summed.
+        """
+        with tf.variable_scope("RNN", initializer=tf.random_normal_initializer(stddev=0.1)):
+            self.W_hx = tf.get_variable("W_hx",
+                                        [self.config.hidden_dimension,
+                                         self.config.embedding_dimension])
+            self.W_hh = tf.get_variable("W_hh",
+                                        [self.config.hidden_dimension,
+                                         self.config.hidden_dimension])
+            self.b_h = tf.get_variable('b_h', [self.config.hidden_dimension, 1])
+        
+        def hidden_unit(p_x, C):
+            c = tf.reshape(tf.reduce_sum(C, reduction_indices=0), [-1,1])
+            p_h = tf.tanh(tf.matmul(self.W_hx,p_x) + tf.matmul(self.W_hh,c) + self.b_h)
+            return p_h
+        
+        self.f_h = hidden_unit
+        return
                 
     def create_recursive_hidden_function(self):
         """ Use while_loop() to construct a recursive graph
         
-        Nested gather in while_loop() will raise error in gradient updates.
+        Nested gather of p_x = L[x][index] in while_loop() will raise error in gradient updates.
         """
         self.create_hidden_unit()
         
@@ -133,7 +159,7 @@ class RNN(object):
         return
     
     def create_update_op(self):
-        optimizer = tf.train.AdamOptimizer()
+        optimizer = tf.train.AdamOptimizer(learning_rate=self.config.learning_rate)
         self.update_op = optimizer.minimize(self.loss)
         return
     
@@ -194,7 +220,7 @@ class RNN(object):
         loss, y_hat, _ = self.sess.run([self.loss, self.y_hat, self.update_op],
                                        feed_dict={self.x:x, self.T:T[:, :-1], self.y:y})
         return loss, y_hat
-        
+    
 def main():
     config = Config()
     model = RNN(config)
