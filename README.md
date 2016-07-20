@@ -2,7 +2,39 @@
 This is the TensorFlow implementation of a recursive neural network model.
 It's designed to work with data structures defined by https://github.com/ofirnachum/tree_rnn.
 
-# Usage and testing of the model on stanford sentiment dataset
+# Test on CoNLL2012 (ontonotes 5.0), targeting parser labels
+
+Run
+```
+python conll.py
+```
+
+In conll_utils.py, I imported from load_conll.py a function that load raw data from CoNLL2012. It was originally main.py provided by Jheng-Long Wu (jlwu@iis.sinica.edu.tw).  
+```python
+sys.path.append("../CONLL2012-intern")
+from load_conll import load_data
+```
+
+Dataset
+```
+training sentences
+  75187
+validation sentences
+  9603
+Test sentences
+  9479
+total samples (nodes in parse trees)
+  3118378
+classes
+  79
+```
+
+Expected result
+```
+91% accuracy
+```
+
+# Test on Stanford sentiment dataset
 
 Edit sentiment.py
 ```python
