@@ -120,9 +120,20 @@ class RNN(object):
             p_x = tf.slice(self.X, [index,0], [1,self.config.embedding_dimension])
             p_x = tf.reshape(p_x, [-1, 1])
             
+            def get_C():
+                c = tf.gather(self.T, index-leaves)
+                c_dummy = tf.ones_like(c) * nodes
+                c_hat = tf.select(tf.equal(c, -1), c_dummy, c)
+                
+                H_dummy = tf.zeros([1, self.config.hidden_dimension])
+                H_hat = tf.concat(0, [H, H_dummy])
+                
+                C = tf.gather(H_hat, c_hat)
+                return C
+            
             C = tf.cond(index < leaves,
                         lambda: tf.zeros([self.config.degree, self.config.hidden_dimension]),
-                        lambda: tf.gather(H, tf.gather(self.T, index-leaves)))
+                        get_C)
             
             p_h = self.f_h(p_x, C)
             p_h = tf.reshape(p_h, [1, -1])
@@ -190,13 +201,51 @@ class RNN(object):
         self.update_op = optimizer.apply_gradients(g_list_new)
         return
     
+    def train(self, root_node):
+        """ Train on a single tree
+        
+        Get integer labels from the tree and transform them to one-hot arrays.
+        """
+        x, T, y_int, _ = tree_rnn.gen_nn_inputs(
+                            root_node,
+                            max_degree = self.config.degree,
+                            only_leaves_have_vals = False,
+                            with_labels = True)
+        samples = len(y_int)
+        y = np.zeros((samples, self.config.output_dimension), dtype=np.float32)
+        y[np.arange(samples), y_int.astype('int32')] = 1
+        
+        loss, _ = self.sess.run([self.loss, self.update_op],
+                                feed_dict={self.x:x, self.T:T[:, :-1], self.y:y})
+        return loss
+        
+    def evaluate(self, root_node):
+        """ Evaluate on a single tree
+        
+        Get integer labels from the tree and transform them to one-hot arrays.
+        """
+        x, T, y_int, _ = tree_rnn.gen_nn_inputs(
+                            root_node,
+                            max_degree = self.config.degree,
+                            only_leaves_have_vals = False,
+                            with_labels = True)
+        
+        samples = len(y_int)
+        y = np.zeros((samples, self.config.output_dimension), dtype=np.float32)
+        y[np.arange(samples), y_int.astype('int32')] = 1
+        
+        y_hat = self.sess.run(self.y_hat, feed_dict={self.x:x, self.T:T[:, :-1]})
+        
+        corrects = np.sum(np.argmax(y_hat, axis=1) == y_int)
+        return corrects, samples
+    
     def predict(self, root_node):
         x, T = tree_rnn.gen_nn_inputs(root_node, max_degree=self.config.degree,
                                       only_leaves_have_vals=False)
         y_hat = self.sess.run(self.y_hat, feed_dict={self.x:x, self.T:T[:, :-1]})
         return y_hat
 
-    def train(self, root_node, y):
+    def train_backup(self, root_node, y):
         x, T = tree_rnn.gen_nn_inputs(root_node, max_degree=self.config.degree,
                                       only_leaves_have_vals=False)
         
