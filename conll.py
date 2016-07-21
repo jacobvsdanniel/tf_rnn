@@ -19,7 +19,8 @@ hidden_dimension = 100
 
 def train():
     # Read data
-    data, degree, vocab, labels = conll_utils.read_conll_dataset(raw_data_path=data_path)
+    data, degree, vocab, labels, entities, non_entities = conll_utils.read_conll_dataset(
+                                                              raw_data_path=data_path)
 
     # Initialize model
     config = tf_rnn.Config(
@@ -59,7 +60,7 @@ def train():
         print "\ntrain average loss %.1f" % loss
         
         score = evaluate_dataset(model, data["development"])
-        print "validation accuracy %.1f%%" % (100*score)
+        print "validation score %.2f" % score
         
         if best_score < score:
             best_score = score
@@ -69,7 +70,7 @@ def train():
     print "finished training, elapsed %.2fs" % (time.time() - start_time)
     saver.restore(model.sess, "tmp.model")
     score = evaluate_dataset(model, data["test"])
-    print "test accuracy %.1f%%" % (100*score)
+    print "test score %.2f" % score
 
 def train_dataset(model, data):
     total_data = len(data)
@@ -82,6 +83,25 @@ def train_dataset(model, data):
     return total_loss / total_data
 
 def evaluate_dataset(model, data):
+    total_true_postives = 0.
+    total_precision_denominator = 0
+    total_recall_denominator = 0
+    for tree in data:
+        true_postives, precision_denominator, recall_denominator = model.evaluate(tree)
+        total_true_postives += true_postives
+        total_precision_denominator += precision_denominator
+        total_recall_denominator += recall_denominator
+    # print total_true_postives
+    # print total_precision_denominator
+    # print total_recall_denominator
+    precision = total_true_postives / total_precision_denominator
+    print precision
+    recall = total_true_postives / total_recall_denominator
+    print recall
+    f1 = 2 / (1/precision + 1/recall)
+    return f1
+    
+def evaluate_dataset_backup(model, data):
     total_corrects = 0.
     total_samples = 0
     for tree in data:
