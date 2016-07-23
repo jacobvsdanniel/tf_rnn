@@ -114,7 +114,7 @@ class RNN(object):
             self.b_h = tf.get_variable('b_h', [self.config.hidden_dimension, 1])
         
         def hidden_unit(p_x, C):
-            c_sum = tf.reshape(tf.reduce_sum(C, reduction_indices=0), [1,-1])
+            c_sum = tf.reshape(tf.reduce_mean(C, reduction_indices=0), [1,-1])
             c_first = tf.slice(C, [0,0], [1,self.config.hidden_dimension])
             c_last = tf.slice(C, [tf.shape(C)[0]-1,0], [1,self.config.hidden_dimension])
             c = tf.reshape(tf.concat(0, [c_sum, c_first, c_last]), [-1,1])
@@ -191,13 +191,20 @@ class RNN(object):
         self.y_hat = tf.nn.softmax(self.O)
         
         self.loss = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(self.O, self.y))
+        
         # Weighted loss
         # loss = tf.nn.softmax_cross_entropy_with_logits(self.O, self.y)
         # y_int = tf.argmax(self.y, dimension=1)
         # y_pos = tf.cast(tf.not_equal(y_int, self.config.output_dimension-1), dtype=tf.float32)
         # y_neg = tf.cast(tf.equal(y_int, self.config.output_dimension-1), dtype=tf.float32)
-        # weight = y_pos*30 + y_neg
+        # weight = y_pos + y_neg*0
         # self.loss = tf.reduce_sum(weight*loss)
+
+        # Mask the loss of DONT_CARE nodes
+        # loss = tf.nn.softmax_cross_entropy_with_logits(self.O, self.y)
+        # y_int = tf.argmax(self.y, dimension=1)
+        # care = tf.cast(tf.not_equal(y_int, self.config.output_dimension-1), dtype=tf.float32)
+        # self.loss = tf.reduce_sum(loss * care)
         return
     
     def create_update_op(self):
@@ -267,24 +274,20 @@ class RNN(object):
                             max_degree = self.config.degree,
                             only_leaves_have_vals = False,
                             with_labels = True)
-        
-        samples = len(y_int)
-        y = np.zeros((samples, self.config.output_dimension), dtype=np.float32)
-        y[np.arange(samples), y_int.astype('int32')] = 1
-        
         if T.shape[0]:
             T = T[:, :-1]
         else:
             T = np.zeros([0, self.config.degree], dtype=np.int32)
         
         y_hat = self.sess.run(self.y_hat, feed_dict={self.x:x, self.T:T})
+        y_hat_int = np.argmax(y_hat, axis=1)
+        correct_array = (y_hat_int%19 == y_int%19)
         
-        correct_array = (np.argmax(y_hat, axis=1) == y_int)
-        postive_array = (np.argmax(y_hat, axis=1) != (self.config.output_dimension-1))
+        # last 79 labels are pos-NONE
+        postive_array = y_hat_int < (self.config.output_dimension-79)
+        
         true_postives = np.sum(correct_array * postive_array)
-        precision_denominator = np.sum(postive_array)
-        recall_denominator = np.sum(y_int != (self.config.output_dimension-1))
-        return true_postives, precision_denominator, recall_denominator
+        return true_postives, np.sum(postive_array)
     
     def evaluate_backup(self, root_node):
         """ Evaluate on a single tree

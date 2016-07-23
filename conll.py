@@ -19,8 +19,7 @@ hidden_dimension = 100
 
 def train():
     # Read data
-    data, degree, vocab, labels, entities, non_entities = conll_utils.read_conll_dataset(
-                                                              raw_data_path=data_path)
+    data, degree, vocab, labels = conll_utils.read_conll_dataset(raw_data_path=data_path)
 
     # Initialize model
     config = tf_rnn.Config(
@@ -73,9 +72,10 @@ def train():
     print "test score %.2f" % score
 
 def train_dataset(model, data):
-    total_data = len(data)
+    tree_list, nodes, nes = data
+    total_data = len(tree_list)
     total_loss = 0.
-    for i, tree in enumerate(data):
+    for i, tree in enumerate(tree_list):
         loss = model.train(tree)
         total_loss += loss
         index = i + 1
@@ -83,23 +83,22 @@ def train_dataset(model, data):
     return total_loss / total_data
 
 def evaluate_dataset(model, data):
+    tree_list, nodes, nes = data
     total_true_postives = 0.
-    total_precision_denominator = 0
-    total_recall_denominator = 0
-    for tree in data:
-        true_postives, precision_denominator, recall_denominator = model.evaluate(tree)
+    total_postives = 0.
+    for tree in tree_list:
+        true_postives, postives = model.evaluate(tree)
         total_true_postives += true_postives
-        total_precision_denominator += precision_denominator
-        total_recall_denominator += recall_denominator
-    # print total_true_postives
-    # print total_precision_denominator
-    # print total_recall_denominator
-    precision = total_true_postives / total_precision_denominator
+        total_postives += postives
+    print total_true_postives
+    print total_postives
+    precision = total_true_postives / total_postives
     print precision
-    recall = total_true_postives / total_recall_denominator
+    recall = total_true_postives / nes
     print recall
     f1 = 2 / (1/precision + 1/recall)
     return f1
+    # return recall
     
 def evaluate_dataset_backup(model, data):
     total_corrects = 0.
