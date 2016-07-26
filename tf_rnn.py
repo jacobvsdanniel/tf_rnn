@@ -1,27 +1,25 @@
 import numpy as np
 import tensorflow as tf
-import tree_rnn
+import conll_utils
 
 class Config(object):
     """ Store hyper parameters for tree models
     """
-    def __init__(self, vocabulary_size=5, embedding_dimension=4, hidden_dimension=3,
+    def __init__(self, pos_dimension=5, vocabulary_size=5, embedding_dimension=300,
+                 hidden_dimension=300,
                  output_dimension=2, degree=2,
-                 learning_rate=0.001, momentum=0.9, patience=3):
+                 learning_rate=0.001):
+        self.pos_dimension = pos_dimension
         self.vocabulary_size = vocabulary_size
         self.embedding_dimension = embedding_dimension
         self.hidden_dimension = hidden_dimension
         self.output_dimension = output_dimension
         self.degree = degree
         self.learning_rate = learning_rate
-        self.momentum = momentum
-        self.patience = patience
         return
         
 class RNN(object):
     """ A Tensorflow implementation of a Recursive Neural Network
-    
-    Refer to [link to formula.pdf] for more details
     """
 
     def __init__(self, config):
@@ -42,11 +40,11 @@ class RNN(object):
         self.x = tf.placeholder(tf.int32, [None])
         self.T = tf.placeholder(tf.int32, [None, self.config.degree])
         self.y = tf.placeholder(tf.float32, [None, self.config.output_dimension])
+        self.P = tf.placeholder(tf.float32, [None, self.config.pos_dimension])
         
         with tf.variable_scope("RNN", initializer=tf.random_normal_initializer(stddev=0.1)):
             self.L = tf.get_variable("L",
-                                     [self.config.vocabulary_size,
-                                      self.config.embedding_dimension])
+                [self.config.vocabulary_size, self.config.embedding_dimension])
         
         x_dummy = tf.ones_like(self.x) * self.config.vocabulary_size
         x_hat = tf.select(tf.equal(self.x, -1), x_dummy, self.x)
@@ -55,34 +53,11 @@ class RNN(object):
         self.X = tf.gather(L_hat, x_hat)
         return
     
-    def create_hidden_unit_concatenated(self):
-        """ Create a reusable graph for computing node hidden features
-        
-        Childiren's vector are concatenated.
-        """
-        with tf.variable_scope("RNN", initializer=tf.random_normal_initializer(stddev=0.1)):
-            self.W_hx = tf.get_variable("W_hx",
+    def create_hidden_unit(self):
+        with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
+            self.W_hp = tf.get_variable("W_hp",
                                         [self.config.hidden_dimension,
-                                         self.config.embedding_dimension])
-            self.W_hh = tf.get_variable("W_hh",
-                                        [self.config.hidden_dimension,
-                                         self.config.hidden_dimension * self.config.degree])
-            self.b_h = tf.get_variable('b_h', [self.config.hidden_dimension, 1])
-        
-        def hidden_unit(p_x, C):
-            c = tf.reshape(C, [-1,1])
-            p_h = tf.tanh(tf.matmul(self.W_hx,p_x) + tf.matmul(self.W_hh,c) + self.b_h)
-            return p_h
-        
-        self.f_h = hidden_unit
-        return
-        
-    def create_hidden_unit_summed(self):
-        """ Create a reusable graph for computing node hidden features
-        
-        Childiren's vector are summed.
-        """
-        with tf.variable_scope("RNN", initializer=tf.random_normal_initializer(stddev=0.1)):
+                                         self.config.pos_dimension])
             self.W_hx = tf.get_variable("W_hx",
                                         [self.config.hidden_dimension,
                                          self.config.embedding_dimension])
@@ -91,47 +66,23 @@ class RNN(object):
                                          self.config.hidden_dimension])
             self.b_h = tf.get_variable('b_h', [self.config.hidden_dimension, 1])
         
-        def hidden_unit(p_x, C):
+        def hidden_unit(p_x, C, p_p):
             c = tf.reshape(tf.reduce_sum(C, reduction_indices=0), [-1,1])
-            p_h = tf.tanh(tf.matmul(self.W_hx,p_x) + tf.matmul(self.W_hh,c) + self.b_h)
+            p_h = tf.tanh(tf.matmul(self.W_hx, p_x)
+                        + tf.matmul(self.W_hh, c)
+                        + tf.matmul(self.W_hp, p_p)
+                        + self.b_h)
             return p_h
         
         self.f_h = hidden_unit
         return
-        
-    def create_hidden_unit_first_last_sum(self):
-        """ Create a reusable graph for computing node hidden features
-        
-        Use [fisrt c, last c, sum c] as children feature
-        """
-        with tf.variable_scope("RNN", initializer=tf.random_normal_initializer(stddev=0.1)):
-            self.W_hx = tf.get_variable("W_hx",
-                                        [self.config.hidden_dimension,
-                                         self.config.embedding_dimension])
-            self.W_hh = tf.get_variable("W_hh",
-                                        [self.config.hidden_dimension,
-                                         self.config.hidden_dimension * 3])
-            self.b_h = tf.get_variable('b_h', [self.config.hidden_dimension, 1])
-        
-        def hidden_unit(p_x, C):
-            c_sum = tf.reshape(tf.reduce_mean(C, reduction_indices=0), [1,-1])
-            c_first = tf.slice(C, [0,0], [1,self.config.hidden_dimension])
-            c_last = tf.slice(C, [tf.shape(C)[0]-1,0], [1,self.config.hidden_dimension])
-            c = tf.reshape(tf.concat(0, [c_sum, c_first, c_last]), [-1,1])
-            p_h = tf.tanh(tf.matmul(self.W_hx,p_x) + tf.matmul(self.W_hh,c) + self.b_h)
-            return p_h
-        
-        self.f_h = hidden_unit
-        return
-                
+    
     def create_recursive_hidden_function(self):
         """ Use while_loop() to construct a recursive graph
         
         Nested gather of p_x = L[x][index] in while_loop() will raise error in gradient updates.
         """
-        self.create_hidden_unit_summed()
-        #self.create_hidden_unit_concatenated()
-        #self.create_hidden_unit_first_last_sum()
+        self.create_hidden_unit()
         
         nodes = tf.shape(self.x)[0]
         leaves = nodes - tf.shape(self.T)[0]
@@ -147,6 +98,9 @@ class RNN(object):
             p_x = tf.slice(self.X, [index,0], [1,self.config.embedding_dimension])
             p_x = tf.reshape(p_x, [-1, 1])
             
+            p_p = tf.slice(self.P, [index,0], [1,self.config.pos_dimension])
+            p_p = tf.reshape(p_p, [-1, 1])
+            
             def get_C():
                 c_padded = tf.gather(self.T, index-leaves)
                 degree = tf.reduce_sum(tf.cast(tf.not_equal(c_padded, -1), tf.int32))
@@ -158,7 +112,7 @@ class RNN(object):
                         lambda: tf.zeros([self.config.degree, self.config.hidden_dimension]),
                         get_C)
             
-            p_h = self.f_h(p_x, C)
+            p_h = self.f_h(p_x, C, p_p)
             p_h = tf.reshape(p_h, [1, -1])
             
             upper = tf.zeros([index, self.config.hidden_dimension])
@@ -170,10 +124,9 @@ class RNN(object):
         return
     
     def create_output_unit(self):
-        with tf.variable_scope("RNN", initializer=tf.random_normal_initializer(stddev=0.1)):
+        with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
             self.W_oh = tf.get_variable("W_oh",
-                                        [self.config.output_dimension,
-                                         self.config.hidden_dimension])
+                            [self.config.output_dimension, self.config.hidden_dimension])
             self.b_o = tf.get_variable('b_o', [self.config.output_dimension, 1])
         
         def output_unit(H):
@@ -212,55 +165,28 @@ class RNN(object):
         self.update_op = optimizer.minimize(self.loss)
         return
     
-    def create_update_op_backup(self):
-        optimizer = tf.train.MomentumOptimizer(self.config.learning_rate, self.config.momentum)
-        #self.update_op = optimizer.minimize(self.loss)
-        
-        g_list = optimizer.compute_gradients(self.loss)
-        
-        # 000
-        g_list_new = [(tf.clip_by_norm(g, 5), v) for g, v in g_list]
-        # g_list_new = []
-        # for g, v in g_list:
-            # g_not_finite = tf.logical_or(tf.is_nan(g), tf.is_inf(g))
-            
-            # 001
-            # g = tf.select(g_not_finite, tf.zeros_like(g), g)
-            # g = tf.clip_by_norm(g, 5)
-            # g = tf.select(g_not_finite, 0.1*v, g)
-            
-            # 002
-            # g = tf.convert_to_tensor(g)
-            # g_norm = tf.sqrt(tf.reduce_sum(tf.square(g)))
-            # g = tf.select(g_not_finite, 0.1*v, g*5/g_norm)
-            
-            # g_list_new.append((g, v))
-        
-        self.update_op = optimizer.apply_gradients(g_list_new)
-        return
-    
     def train(self, root_node):
         """ Train on a single tree
         
         Get integer labels from the tree and transform them to one-hot arrays.
         In (edge) case there are no internal nodes, we make sure T has rank 2.
         """
-        x, T, y_int, _ = tree_rnn.gen_nn_inputs(
-                            root_node,
-                            max_degree = self.config.degree,
-                            only_leaves_have_vals = False,
-                            with_labels = True)
-        samples = len(y_int)
-        y = np.zeros((samples, self.config.output_dimension), dtype=np.float32)
-        y[np.arange(samples), y_int.astype('int32')] = 1
+        x, T, y_int, p = conll_utils.get_formatted_input(root_node, self.config.degree)
         
         if T.shape[0]:
             T = T[:, :-1]
         else:
             T = np.zeros([0, self.config.degree], dtype=np.int32)
         
+        samples = len(y_int)
+        y = np.zeros((samples, self.config.output_dimension), dtype=np.float32)
+        y[np.arange(samples), y_int] = 1
+        
+        P = np.zeros((samples, self.config.pos_dimension), dtype=np.float32)
+        P[np.arange(samples), p] = 1
+        
         loss, _ = self.sess.run([self.loss, self.update_op],
-                                feed_dict={self.x:x, self.T:T, self.y:y})
+                                feed_dict={self.x:x, self.T:T, self.y:y, self.P:P})
         return loss
     
     def evaluate(self, root_node):
@@ -269,82 +195,26 @@ class RNN(object):
         Get integer labels from the tree and transform them to one-hot arrays.
         In (edge) case there are no internal nodes, we make sure T has rank 2.
         """
-        x, T, y_int, _ = tree_rnn.gen_nn_inputs(
-                            root_node,
-                            max_degree = self.config.degree,
-                            only_leaves_have_vals = False,
-                            with_labels = True)
+        x, T, y_int, p = conll_utils.get_formatted_input(root_node, self.config.degree)
+                            
         if T.shape[0]:
             T = T[:, :-1]
         else:
             T = np.zeros([0, self.config.degree], dtype=np.int32)
         
-        y_hat = self.sess.run(self.y_hat, feed_dict={self.x:x, self.T:T})
+        samples = len(p)
+        P = np.zeros((samples, self.config.pos_dimension), dtype=np.float32)
+        P[np.arange(samples), p] = 1
+        
+        y_hat = self.sess.run(self.y_hat, feed_dict={self.x:x, self.T:T, self.P:P})
         y_hat_int = np.argmax(y_hat, axis=1)
-        correct_array = (y_hat_int%19 == y_int%19)
+        correct_array = (y_hat_int/self.config.pos_dimension == y_int/self.config.pos_dimension)
         
         # last 79 labels are pos-NONE
-        postive_array = y_hat_int < (self.config.output_dimension-79)
+        postive_array = y_hat_int < (self.config.output_dimension - self.config.pos_dimension)
         
         true_postives = np.sum(correct_array * postive_array)
         return true_postives, np.sum(postive_array)
-    
-    def evaluate_backup(self, root_node):
-        """ Evaluate on a single tree
-        
-        Get integer labels from the tree and transform them to one-hot arrays.
-        In (edge) case there are no internal nodes, we make sure T has rank 2.
-        """
-        x, T, y_int, _ = tree_rnn.gen_nn_inputs(
-                            root_node,
-                            max_degree = self.config.degree,
-                            only_leaves_have_vals = False,
-                            with_labels = True)
-        
-        samples = len(y_int)
-        y = np.zeros((samples, self.config.output_dimension), dtype=np.float32)
-        y[np.arange(samples), y_int.astype('int32')] = 1
-        
-        if T.shape[0]:
-            T = T[:, :-1]
-        else:
-            T = np.zeros([0, self.config.degree], dtype=np.int32)
-        
-        y_hat = self.sess.run(self.y_hat, feed_dict={self.x:x, self.T:T})
-        
-        corrects = np.sum(np.argmax(y_hat, axis=1) == y_int)
-        return corrects, samples
-    
-    def predict(self, root_node):
-        x, T = tree_rnn.gen_nn_inputs(root_node, max_degree=self.config.degree,
-                                      only_leaves_have_vals=False)
-        y_hat = self.sess.run(self.y_hat, feed_dict={self.x:x, self.T:T[:, :-1]})
-        return y_hat
-
-    def train_backup(self, root_node, y):
-        x, T = tree_rnn.gen_nn_inputs(root_node, max_degree=self.config.degree,
-                                      only_leaves_have_vals=False)
-        
-        loss, y_hat, _ = self.sess.run([self.loss, self.y_hat, self.update_op],
-                                       feed_dict={self.x:x, self.T:T[:, :-1], self.y:y})
-        return loss, y_hat
-    
-    def train_step(self, root_node, not_used):
-        """ Compatible to train_step() in sentiment.py
-        
-        Get integer labels from tree and transform them to one-hot arrays.
-        """
-        x, T, y_int, _ = tree_rnn.gen_nn_inputs(root_node,
-                                                max_degree=self.config.degree,
-                                                only_leaves_have_vals=False,
-                                                with_labels=True)
-        samples = len(y_int)
-        y = np.zeros((samples, self.config.output_dimension), dtype=np.float32)
-        y[np.arange(samples), y_int.astype('int32')] = 1
-        
-        loss, y_hat, _ = self.sess.run([self.loss, self.y_hat, self.update_op],
-                                       feed_dict={self.x:x, self.T:T[:, :-1], self.y:y})
-        return loss, y_hat
     
 def main():
     config = Config()
@@ -353,6 +223,7 @@ def main():
         sess.run(tf.initialize_all_variables())
         L = sess.run(model.L)
         print L
+        print tf.trainable_variables()
     return
     
 if __name__ == "__main__":
