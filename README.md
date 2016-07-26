@@ -1,73 +1,32 @@
-# tf_rnn
-This is the TensorFlow implementation of a recursive neural network model.
-It's designed to work with data structures defined by https://github.com/ofirnachum/tree_rnn.
+# TF_RNN
+This repository contains Recursive Neural Networks implemented with Tensorflow.
 
-# Test on CoNLL2012 (ontonotes 5.0), targeting parser labels
+# GloVe Word Embeddings
+Word embeddings will be initialized with glove.840B.300.
 
-Run
+In conll.py:
+```python
+glove_path = "."
+glove_vecs = np.load(os.path.join(glove_path, "glove.npy"))
+glove_words = np.load(os.path.join(glove_path, "words.npy"))
 ```
-python conll.py
-```
 
-In conll_utils.py, I imported from load_conll.py a function that load raw data from CoNLL2012. It was originally main.py provided by Jheng-Long Wu (jlwu@iis.sinica.edu.tw).  
+# CoNLL 2012 Dataset
+The dataset and the imported load_conll.py was provided to me by Jheng-Long Wu (jlwu@iis.sinica.edu.tw).  
+
+In conll_utils.py:
 ```python
 sys.path.append("../CONLL2012-intern")
 from load_conll import load_data
 ```
 
-Dataset
-```
-training sentences
-  75187
-validation sentences
-  9603
-Test sentences
-  9479
-total samples (nodes in parse trees)
-  3118378
-classes
-  79
-```
-
-Expected result
-```
-91% accuracy
-```
-
-# Test on Stanford sentiment dataset
-
-Edit sentiment.py
+In conll.py:
 ```python
-# Initialize a model:
-config = tf_rnn.Config(
-    embedding_dimension=EMB_DIM,
-    vocabulary_size=num_emb, 
-    hidden_dimension=HIDDEN_DIM,
-    output_dimension=output_dim,
-    degree=max_degree,
-    learning_rate=LEARNING_RATE)
-model = tf_rnn.RNN(config)
-model.sess = tf.Session()
-model.sess.run(tf.initialize_all_variables())
+data_path = "../CONLL2012-intern/conll-2012/v4/data"
 ```
 
-More editing...
-```python
-# Get word embeddings data structure from model
-embeddings = model.sess.run(model.L)
-# codes that fill in embeddings #
-## ... ##
-# Update embeddings to model
-update = model.L.assign(embeddings)
-model.sess.run(update)
+# Predicting Named Entities
+Run
 ```
-
-Expected Results
-```
-Each epoch should take 2 to 3 minutes.
-Coarse-grained sentiment data
-    82% accuracy (concatenated children)
-Find-grained sentiment data
-    41% accuracy (concatenated children)
-    43% accuracy (summed children)
+python conll.py
 ```
