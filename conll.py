@@ -11,7 +11,7 @@ import conll_utils
 
 data_path = "../CONLL2012-intern/conll-2012/v4/data"
 data_split_list = ["train", "development", "test"]
-glove_path = "../treelstm/data"
+glove_path = "."
 
 patience = 3
 max_epoches = 30
@@ -52,30 +52,30 @@ def train():
     model.sess.run(update_op)
 
     # Train
-    start_time = time.time()
     saver = tf.train.Saver()
-    best_score = 0.
+    best_score = [0., 0., 0.]
     best_epoch = 0
     for epoch in xrange(max_epoches):
         if epoch - best_epoch > patience:      
             break
-        print "\nEpoch %d" % epoch
+        print "\n<Epoch %d>" % epoch
         
+        start_time = time.time()
         loss = train_dataset(model, data["train"])
-        print "train average loss %.3f" % loss
+        print "[train] average loss %.3f; elapsed %.2fs" % (loss, time.time() - start_time)
         
         score = evaluate_dataset(model, data["development"])
-        print "validation score %.2f%%" % (score*100)
+        print "[validation] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score
         
-        if best_score < score:
+        if best_score[2] < score[2]:
             best_score = score
             best_epoch = epoch
             saver.save(model.sess, "tmp.model")
-        
-    print "finished training, elapsed %.2fs" % (time.time() - start_time)
+    
+    print "[best validation] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % best_score
     saver.restore(model.sess, "tmp.model")
     score = evaluate_dataset(model, data["test"])
-    print "test score %.2f%%" % (score*100)
+    print "[test] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score
 
 def train_dataset(model, data):
     tree_list, nodes, nes = data
@@ -93,28 +93,18 @@ def train_dataset(model, data):
 
 def evaluate_dataset(model, data):
     tree_list, nodes, nes = data
+    
     total_true_postives = 0.
     total_postives = 0.
     for tree in tree_list:
         true_postives, postives = model.evaluate(tree)
         total_true_postives += true_postives
         total_postives += postives
-    precision = total_true_postives / total_postives
-    print "precision %.1f%%" % (precision*100)
-    recall = total_true_postives / nes
-    print "recall %.1f%%" % (recall*100)
-    f1 = 2 / (1/precision + 1/recall)
-    return f1
-    # return recall
     
-def evaluate_dataset_backup(model, data):
-    total_corrects = 0.
-    total_samples = 0
-    for tree in data:
-        corrects, samples = model.evaluate(tree)
-        total_corrects += corrects
-        total_samples += samples
-    return total_corrects / total_samples
+    precision = total_true_postives / total_postives
+    recall = total_true_postives / nes
+    f1 = 2 / (1/precision + 1/recall)
+    return precision*100, recall*100, f1*100
 
 if __name__ == '__main__':
     train()

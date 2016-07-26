@@ -183,7 +183,7 @@ class RNN(object):
         y[np.arange(samples), y_int] = 1
         
         P = np.zeros((samples, self.config.pos_dimension), dtype=np.float32)
-        P[np.arange(samples), p] = 1
+        P[np.arange(samples), p] = 5
         
         loss, _ = self.sess.run([self.loss, self.update_op],
                                 feed_dict={self.x:x, self.T:T, self.y:y, self.P:P})
@@ -204,18 +204,20 @@ class RNN(object):
         
         samples = len(p)
         P = np.zeros((samples, self.config.pos_dimension), dtype=np.float32)
-        P[np.arange(samples), p] = 1
+        P[np.arange(samples), p] = 5
         
         y_hat = self.sess.run(self.y_hat, feed_dict={self.x:x, self.T:T, self.P:P})
         y_hat_int = np.argmax(y_hat, axis=1)
         correct_array = (y_hat_int/self.config.pos_dimension == y_int/self.config.pos_dimension)
+        # correct_array = (y_hat_int == y_int)
         
         # last 79 labels are pos-NONE
         postive_array = y_hat_int < (self.config.output_dimension - self.config.pos_dimension)
+        # postive_array = y_hat_int < (self.config.output_dimension - 1)
         
         true_postives = np.sum(correct_array * postive_array)
         return true_postives, np.sum(postive_array)
-    
+        
 def main():
     config = Config()
     model = RNN(config)

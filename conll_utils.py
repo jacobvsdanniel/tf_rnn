@@ -68,11 +68,13 @@ def read_named_entity(named_entity_file):
     log(" done\n")
     return entity_list, entity_to_index
 
-def construct_node(tree, ner_raw_data, word_to_index, pos_to_index,
+def construct_node(tree, ner_raw_data, head_raw_data,
+                    word_to_index, pos_to_index,
                     pos_count, ne_count, pos_ne_count,
                     sentence_index, offset):
     if len(tree.subtrees) == 1:
-        return construct_node(tree.subtrees[0], ner_raw_data, word_to_index, pos_to_index,
+        return construct_node(tree.subtrees[0], ner_raw_data, head_raw_data,
+                word_to_index, pos_to_index,
                 pos_count, ne_count, pos_ne_count,
                 sentence_index, offset)
     node = Node()
@@ -95,7 +97,7 @@ def construct_node(tree, ner_raw_data, word_to_index, pos_to_index,
     # Process children and get ne info
     degree = len(tree.subtrees)
     for subtree in tree.subtrees:
-        child, child_degree, offset = construct_node(subtree, ner_raw_data,
+        child, child_degree, offset = construct_node(subtree, ner_raw_data, head_raw_data,
                                         word_to_index, pos_to_index,
                                         pos_count, ne_count, pos_ne_count,
                                         sentence_index, offset)
@@ -108,6 +110,11 @@ def construct_node(tree, ner_raw_data, word_to_index, pos_to_index,
     node.ne = ne
     ne_count[ne] += 1
     if ne != "NONE": pos_ne_count[pos] += 1
+    
+    # Process head info
+    head = head_raw_data[((start_offset,offset), pos)][1]
+    node.word_index = word_to_index[head]
+    
     return node, degree, offset
 
 def get_tree_data(raw_data, word_to_index, pos_to_index):
@@ -126,8 +133,10 @@ def get_tree_data(raw_data, word_to_index, pos_to_index):
         for part in raw_data[document]:
             ner_raw_data = raw_data[document][part]["ner"]
             for sentence_index, parse in enumerate(raw_data[document][part]["parses"]):
+                head_raw_data = raw_data[document][part]["heads"][sentence_index]
                 root_node, degree, _ = construct_node(
-                                        parse, ner_raw_data, word_to_index, pos_to_index,
+                                        parse, ner_raw_data, head_raw_data,
+                                        word_to_index, pos_to_index,
                                         pos_count, ne_count, pos_ne_count,
                                         sentence_index, 0)
                 root_list.append(root_node)
@@ -151,7 +160,7 @@ def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
     # Read all raw data
     raw_data = {}
     for split in data_split_list:
-        full_path = os.path.join(raw_data_path, split, "data/english/annotations/bc/cnn")
+        full_path = os.path.join(raw_data_path, split, "data/english/annotations")
         config = {"file_suffix": "gold_conll", "dir_prefix": full_path}
         raw_data[split] = load_data(config)
     
