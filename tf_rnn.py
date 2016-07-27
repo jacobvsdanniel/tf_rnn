@@ -41,16 +41,21 @@ class RNN(object):
         self.T = tf.placeholder(tf.int32, [None, self.config.degree])
         self.y = tf.placeholder(tf.float32, [None, self.config.output_dimension])
         self.P = tf.placeholder(tf.float32, [None, self.config.pos_dimension])
+        self.a = tf.placeholder(tf.int32, [None])
         
         with tf.variable_scope("RNN", initializer=tf.random_normal_initializer(stddev=0.1)):
             self.L = tf.get_variable("L",
                 [self.config.vocabulary_size, self.config.embedding_dimension])
         
-        x_dummy = tf.ones_like(self.x) * self.config.vocabulary_size
-        x_hat = tf.select(tf.equal(self.x, -1), x_dummy, self.x)
-        L_dummy = tf.zeros([1, self.config.embedding_dimension])
-        L_hat = tf.concat(0, [self.L, L_dummy])
+        dummy_embedding = tf.zeros([1, self.config.embedding_dimension])
+        L_hat = tf.concat(0, [self.L, dummy_embedding])
+        dummy_index = tf.ones_like(self.x) * self.config.vocabulary_size
+        
+        x_hat = tf.select(tf.equal(self.x, -1), dummy_index, self.x)
         self.X = tf.gather(L_hat, x_hat)
+        
+        a_hat = tf.select(tf.equal(self.a, -1), dummy_index, self.a)
+        self.A = tf.gather(L_hat, a_hat)
         return
     
     def create_hidden_unit(self):
@@ -61,16 +66,20 @@ class RNN(object):
             self.W_hx = tf.get_variable("W_hx",
                                         [self.config.hidden_dimension,
                                          self.config.embedding_dimension])
+            self.W_ha = tf.get_variable("W_ha",
+                                        [self.config.hidden_dimension,
+                                         self.config.embedding_dimension])
             self.W_hh = tf.get_variable("W_hh",
                                         [self.config.hidden_dimension,
                                          self.config.hidden_dimension])
             self.b_h = tf.get_variable('b_h', [self.config.hidden_dimension, 1])
         
-        def hidden_unit(p_x, C, p_p):
+        def hidden_unit(p_x, C, p_p, p_a):
             c = tf.reshape(tf.reduce_sum(C, reduction_indices=0), [-1,1])
             p_h = tf.tanh(tf.matmul(self.W_hx, p_x)
                         + tf.matmul(self.W_hh, c)
                         + tf.matmul(self.W_hp, p_p)
+                        + tf.matmul(self.W_ha, p_a)
                         + self.b_h)
             return p_h
         
@@ -101,6 +110,9 @@ class RNN(object):
             p_p = tf.slice(self.P, [index,0], [1,self.config.pos_dimension])
             p_p = tf.reshape(p_p, [-1, 1])
             
+            p_a = tf.slice(self.A, [index,0], [1,self.config.embedding_dimension])
+            p_a = tf.reshape(p_a, [-1, 1])
+            
             def get_C():
                 c_padded = tf.gather(self.T, index-leaves)
                 degree = tf.reduce_sum(tf.cast(tf.not_equal(c_padded, -1), tf.int32))
@@ -112,7 +124,7 @@ class RNN(object):
                         lambda: tf.zeros([self.config.degree, self.config.hidden_dimension]),
                         get_C)
             
-            p_h = self.f_h(p_x, C, p_p)
+            p_h = self.f_h(p_x, C, p_p, p_a)
             p_h = tf.reshape(p_h, [1, -1])
             
             upper = tf.zeros([index, self.config.hidden_dimension])
@@ -171,7 +183,7 @@ class RNN(object):
         Get integer labels from the tree and transform them to one-hot arrays.
         In (edge) case there are no internal nodes, we make sure T has rank 2.
         """
-        x, T, y_int, p = conll_utils.get_formatted_input(root_node, self.config.degree)
+        x, T, y_int, p, a = conll_utils.get_formatted_input(root_node, self.config.degree)
         
         if T.shape[0]:
             T = T[:, :-1]
@@ -186,7 +198,7 @@ class RNN(object):
         P[np.arange(samples), p] = 5
         
         loss, _ = self.sess.run([self.loss, self.update_op],
-                                feed_dict={self.x:x, self.T:T, self.y:y, self.P:P})
+                                feed_dict={self.x:x, self.T:T, self.y:y, self.P:P, self.a:a})
         return loss
     
     def evaluate(self, root_node):
@@ -195,6 +207,28 @@ class RNN(object):
         Get integer labels from the tree and transform them to one-hot arrays.
         In (edge) case there are no internal nodes, we make sure T has rank 2.
         """
+        x, T, y_int, p, a = conll_utils.get_formatted_input(root_node, self.config.degree)
+                            
+        if T.shape[0]:
+            T = T[:, :-1]
+        else:
+            T = np.zeros([0, self.config.degree], dtype=np.int32)
+        
+        samples = len(p)
+        P = np.zeros((samples, self.config.pos_dimension), dtype=np.float32)
+        P[np.arange(samples), p] = 5
+        
+        y_hat = self.sess.run(self.y_hat, feed_dict={self.x:x, self.T:T, self.P:P, self.a:a})
+        y_hat_int = np.argmax(y_hat, axis=1)
+        correct_array = (y_hat_int/self.config.pos_dimension == y_int/self.config.pos_dimension)
+        
+        # last 79 labels are pos-NONE
+        postive_array = y_hat_int < (self.config.output_dimension - self.config.pos_dimension)
+        
+        true_postives = np.sum(correct_array * postive_array)
+        return true_postives, np.sum(postive_array)
+        
+    def predict(self, root_node):
         x, T, y_int, p = conll_utils.get_formatted_input(root_node, self.config.degree)
                             
         if T.shape[0]:
@@ -207,16 +241,13 @@ class RNN(object):
         P[np.arange(samples), p] = 5
         
         y_hat = self.sess.run(self.y_hat, feed_dict={self.x:x, self.T:T, self.P:P})
-        y_hat_int = np.argmax(y_hat, axis=1)
-        correct_array = (y_hat_int/self.config.pos_dimension == y_int/self.config.pos_dimension)
-        # correct_array = (y_hat_int == y_int)
+        y_hat_int = np.argmax(y_hat, axis=1) / self.config.pos_dimension
+        y_int = y_int / self.config.pos_dimension
         
-        # last 79 labels are pos-NONE
-        postive_array = y_hat_int < (self.config.output_dimension - self.config.pos_dimension)
-        # postive_array = y_hat_int < (self.config.output_dimension - 1)
-        
-        true_postives = np.sum(correct_array * postive_array)
-        return true_postives, np.sum(postive_array)
+        confusion_matrix = np.zeros([19, 19], dtype=np.int32)
+        for node in range(y_int.shape[0]):
+            confusion_matrix[y_int[node]][y_hat_int[node]] += 1
+        return confusion_matrix
         
 def main():
     config = Config()

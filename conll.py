@@ -11,7 +11,6 @@ import conll_utils
 
 data_path = "../CONLL2012-intern/conll-2012/v4/data"
 data_split_list = ["train", "development", "test"]
-glove_path = "."
 
 patience = 3
 max_epoches = 30
@@ -23,7 +22,7 @@ hidden_dimension = 300
 
 def train():
     # Read data
-    data, degree, word_to_index, labels, poses = (
+    data, degree, word_to_index, labels, poses, ne_list = (
         conll_utils.read_conll_dataset(raw_data_path=data_path))
 
     # Initialize model
@@ -39,17 +38,17 @@ def train():
     model.sess = tf.Session()
     model.sess.run(tf.initialize_all_variables())
     
+    # Read glove embeddings
+    glove_word_array = np.load("glove_word.npy")
+    glove_embedding_array = np.load("glove_embedding.npy")
+    glove_word_to_index = {word: i for i, word in enumerate(glove_word_array)}
+    
     # Initialize word embeddings to glove
     L = model.sess.run(model.L)
-    glove_vecs = np.load(os.path.join(glove_path, "glove.npy"))
-    glove_words = np.load(os.path.join(glove_path, "words.npy"))
-    glove_word2idx = dict((word, i) for i, word in enumerate(glove_words))
     for word, index in word_to_index.iteritems():
-        if word in glove_word2idx:
-            L[index] = glove_vecs[glove_word2idx[word]]
-    glove_vecs, glove_words, glove_word2idx = [], [], []
-    update_op = model.L.assign(L)
-    model.sess.run(update_op)
+        if word in glove_word_to_index:
+            L[index] = glove_embedding_array[glove_word_to_index[word]]
+    model.sess.run(model.L.assign(L))
 
     # Train
     saver = tf.train.Saver()
@@ -106,5 +105,49 @@ def evaluate_dataset(model, data):
     f1 = 2 / (1/precision + 1/recall)
     return precision*100, recall*100, f1*100
 
+def evaluate_confusion(model, data):
+    tree_list, _, _ = data
+    
+    confusion_matrix = np.zeros([19, 19], dtype=np.int32)
+    for tree in tree_list:
+        confusion_matrix += model.predict(tree)
+        
+    return confusion_matrix
+
+def validate():
+    # Read data
+    data, degree, word_to_index, labels, poses, ne_list = (
+        conll_utils.read_conll_dataset(raw_data_path=data_path))
+
+    # Initialize model
+    config = tf_rnn.Config(
+        pos_dimension = poses,
+        embedding_dimension = embedding_dimension,
+        vocabulary_size = len(word_to_index), 
+        hidden_dimension = hidden_dimension,
+        output_dimension = labels,
+        degree = degree,
+        learning_rate = learning_rate)
+    model = tf_rnn.RNN(config)
+    model.sess = tf.Session()
+    model.sess.run(tf.initialize_all_variables())
+    
+    saver = tf.train.Saver()
+    saver.restore(model.sess, "tmp.model")
+    confusion_matrix = evaluate_confusion(model, data["development"])
+    
+    ne_list.append("NONE")
+    print " "*13,
+    for ne in ne_list:
+        print "%4s" % ne[:4],
+    print ""
+    for i in range(19):
+        print "%12s" % ne_list[i],
+        for j in range(19):
+            print "%4d" % confusion_matrix[i][j],
+        print ""
+    return
+    
 if __name__ == '__main__':
     train()
+    #validate()

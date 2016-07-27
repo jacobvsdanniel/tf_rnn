@@ -25,27 +25,44 @@ def log(msg):
 def get_sorted_dict(d):
     return sorted(zip(*reversed(zip(*d.iteritems()))), reverse=True)
     
-def extract_vocabulary_from_raw_data(raw_data, vocabulary_set):
-    log("extract_vocabulary_from_raw_data()...")
-    for document in raw_data:
-        for part in raw_data[document]:
-            for sentence in raw_data[document][part]["text"]:
-                vocabulary_set |= set(sentence)
+def extract_conll_vocabulary(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
+                             vocabulary_file = "vocabulary.txt"):
+    log("extract_conll_vocabulary()...")
+    
+    vocabulary_set = set()
+    for split in ["train", "development", "test"]:
+        full_path = os.path.join(raw_data_path, split, "data/english/annotations")
+        config = {"file_suffix": "gold_conll", "dir_prefix": full_path}
+        raw_data = load_data(config)
+        for document in raw_data:
+            for part in raw_data[document]:
+                for sentence in raw_data[document][part]["text"]:
+                    vocabulary_set |= set(sentence)
+    
+    with codecs.open(vocabulary_file, "w", encoding="utf8") as f:
+        for word in sorted(vocabulary_set):
+            f.write(word + '\n')
+        
     log(" done\n")
     return
-
-def get_word_to_index(vocabulary_set):
-    log("get_word_to_index()...")
+    
+def read_vocabulary(vocabulary_file):
+    log("read_vocabulary()...")
+    
+    word_list = []
     word_to_index = {}
-    count = 0
-    for word in sorted(vocabulary_set):
-        word_to_index[word] = count
-        count += 1
-    log(" %d words\n" % count)
-    return word_to_index
+    with codecs.open(vocabulary_file, "r", encoding="utf8") as f:
+        for line in f.readlines():
+            word = line.strip()
+            word_to_index[word] = len(word_list)
+            word_list.append(word)
+    
+    log(" %d words\n" % len(word_to_index))
+    return word_list, word_to_index
 
 def read_pos(pos_file):
     log("read_pos()...")
+    
     pos_list = []
     pos_to_index = {}
     with open(pos_file, "r") as f:
@@ -53,20 +70,23 @@ def read_pos(pos_file):
             pos = line.strip()
             pos_to_index[pos] = len(pos_list)
             pos_list.append(pos)
-    log(" done\n")
+    
+    log(" %d pos\n" % len(pos_to_index))
     return pos_list, pos_to_index
     
-def read_named_entity(named_entity_file):
-    log("read_named_entity()...")
-    entity_list = []
-    entity_to_index = {}
-    with open(named_entity_file, "r") as f:
+def read_ne(ne_file):
+    log("read_ne()...")
+    
+    ne_list = []
+    ne_to_index = {}
+    with open(ne_file, "r") as f:
         for line in f.readlines():
-            entity = line.strip()
-            entity_to_index[entity] = len(entity_list)
-            entity_list.append(entity)
-    log(" done\n")
-    return entity_list, entity_to_index
+            ne = line.strip()
+            ne_to_index[ne] = len(ne_list)
+            ne_list.append(ne)
+    
+    log(" %d ne\n" % len(ne_to_index))
+    return ne_list, ne_to_index
 
 def construct_node(tree, ner_raw_data, head_raw_data,
                     word_to_index, pos_to_index,
@@ -114,6 +134,9 @@ def construct_node(tree, ner_raw_data, head_raw_data,
     # Process head info
     head = head_raw_data[((start_offset,offset), pos)][1]
     node.word_index = word_to_index[head]
+    node.parent_head_index = -1
+    for child in node.child_list:
+        child.parent_head_index = node.word_index
     
     return node, degree, offset
 
@@ -153,8 +176,9 @@ def label_tree_data(node, pos_ne_to_label):
     return
     
 def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
+                       vocabulary_file = "vocabulary.txt",
                        pos_file = "pos.txt",
-                       named_entity_file = "ne.txt"):
+                       ne_file = "ne.txt"):
     data_split_list = ["train", "development", "test"]
     
     # Read all raw data
@@ -164,17 +188,14 @@ def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
         config = {"file_suffix": "gold_conll", "dir_prefix": full_path}
         raw_data[split] = load_data(config)
     
-    # Extract word list
-    vocabulary_set = set()
-    for split in data_split_list:
-        extract_vocabulary_from_raw_data(raw_data[split], vocabulary_set)
-    word_to_index = get_word_to_index(vocabulary_set)
+    # Read word list
+    word_list, word_to_index = read_vocabulary(vocabulary_file)
     
     # Read POS list
     pos_list, pos_to_index = read_pos(pos_file)
     
     # Read named entity list
-    ne_list, ne_to_index = read_named_entity(named_entity_file)
+    ne_list, ne_to_index = read_ne(ne_file)
     
     # Build a tree structure for each sentence
     data = {}
@@ -241,7 +262,7 @@ def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
         for root_node in data[split][0]:
             label_tree_data(root_node, pos_ne_to_label)
     
-    return data, max_degree, word_to_index, label, len(pos_to_index)
+    return data, max_degree, word_to_index, label, len(pos_to_index), ne_list
     
 def get_formatted_input(root_node, degree):
     """ Get inputs with RNN required format
@@ -249,6 +270,8 @@ def get_formatted_input(root_node, degree):
     x: vector; word indices of nodes
     T: matrix; the tree structure
     y: vector; labels of nodes
+    p: vector; pos indices of nodes
+    a: vector; word indices of node parents
     """
     # Get BFS layers
     layer_list = []
@@ -265,6 +288,8 @@ def get_formatted_input(root_node, degree):
     T = []
     y = []
     p = []
+    a = []
+    
     index = -1
     for layer in reversed(layer_list):
         for node in layer:
@@ -280,12 +305,37 @@ def get_formatted_input(root_node, degree):
             
             p.append(node.pos_index)
             
+            a.append(node.parent_head_index)
+            
     x = np.array(x, dtype=np.int32)
     T = np.array(T, dtype=np.int32)
     y = np.array(y, dtype=np.int32)
     p = np.array(p, dtype=np.int32)
-    return x, T, y, p
-                
+    a = np.array(a, dtype=np.int32)
+    return x, T, y, p, a
+
+def extract_glove_embeddings(glove_file = "glove.840B.300d.txt",
+                             vocabulary_file = "vocabulary.txt"):
+    
+    word_list, word_to_index = read_vocabulary(vocabulary_file)
+    
+    word_list = []
+    embedding_list = []
+    with open(glove_file, "r") as f:
+        for line in f:
+            line = line.strip().split()
+            word = line[0]
+            if word not in word_to_index: continue
+            embedding = np.array([float(i) for i in line[1:]])
+            word_list.append(word)
+            embedding_list.append(embedding)
+    
+    np.save("glove_word.npy", word_list)
+    np.save("glove_embedding.npy", embedding_list)
+    return
+    
 if __name__ == "__main__":
+    # extract_glove_embeddings()
+    # extract_conll_vocabulary()
     read_conll_dataset()
     exit()
