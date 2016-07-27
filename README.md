@@ -1,15 +1,16 @@
 # TF_RNN
 This repository contains Recursive Neural Networks implemented with Tensorflow.
 
-# GloVe Word Embeddings
-Word embeddings will be initialized with glove.840B.300.
+# Prepare Initial Word Embeddings
+1. Get glove.840B.300d.txt
 
-In conll.py:
+2. Run
 ```python
-glove_path = "."
-glove_vecs = np.load(os.path.join(glove_path, "glove.npy"))
-glove_words = np.load(os.path.join(glove_path, "words.npy"))
+import conll_utils
+conll_utils.extract_glove_embeddings()
 ```
+
+3. You should see glove_word.npy and glove_embedding.npy
 
 # CoNLL 2012 Dataset
 The dataset and the imported load_conll.py was provided to me by Jheng-Long Wu (jlwu@iis.sinica.edu.tw).  
@@ -25,7 +26,7 @@ In conll.py:
 data_path = "../CONLL2012-intern/conll-2012/v4/data"
 ```
 
-# Predicting Named Entities
+# Predict Named Entities
 Run
 ```
 python conll.py
