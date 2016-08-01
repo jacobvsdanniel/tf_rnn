@@ -24,6 +24,26 @@ def log(msg):
     
 def get_sorted_dict(d):
     return sorted(zip(*reversed(zip(*d.iteritems()))), reverse=True)
+
+def extract_glove_embeddings(glove_file = "glove.840B.300d.txt",
+                             vocabulary_file = "vocabulary.txt"):
+    
+    word_list, word_to_index = read_vocabulary(vocabulary_file)
+    
+    word_list = []
+    embedding_list = []
+    with open(glove_file, "r") as f:
+        for line in f:
+            line = line.strip().split()
+            word = line[0]
+            if word not in word_to_index: continue
+            embedding = np.array([float(i) for i in line[1:]])
+            word_list.append(word)
+            embedding_list.append(embedding)
+    
+    np.save("glove_word.npy", word_list)
+    np.save("glove_embedding.npy", embedding_list)
+    return
     
 def extract_conll_vocabulary(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
                              vocabulary_file = "vocabulary.txt"):
@@ -91,54 +111,55 @@ def read_ne(ne_file):
 def construct_node(tree, ner_raw_data, head_raw_data,
                     word_to_index, pos_to_index,
                     pos_count, ne_count, pos_ne_count,
-                    sentence_index, offset):
+                    sentence_index):
     if len(tree.subtrees) == 1:
         return construct_node(tree.subtrees[0], ner_raw_data, head_raw_data,
-                word_to_index, pos_to_index,
-                pos_count, ne_count, pos_ne_count,
-                sentence_index, offset)
+                                word_to_index, pos_to_index,
+                                pos_count, ne_count, pos_ne_count,
+                                sentence_index)
     node = Node()
-    start_offset = offset
-    word = tree.word
     pos = tree.label
-    
-    # Process word info
-    if word:
-        node.word_index = word_to_index[word]
-        offset += 1
-    else:
-        node.word_index = -1
+    word = tree.word
+    span = tree.span
+    sentence_span = (sentence_index, span[0], span[1])
+    head = head_raw_data[(span, pos)][1]
+    ne = ner_raw_data[sentence_span] if sentence_span in ner_raw_data else "NONE"
     
     # Process pos info
     node.pos = pos
     node.pos_index = pos_to_index[pos]
     pos_count[pos] += 1
     
-    # Process children and get ne info
-    degree = len(tree.subtrees)
-    for subtree in tree.subtrees:
-        child, child_degree, offset = construct_node(subtree, ner_raw_data, head_raw_data,
-                                        word_to_index, pos_to_index,
-                                        pos_count, ne_count, pos_ne_count,
-                                        sentence_index, offset)
-        node.add_child(child)
-        degree = max(degree, child_degree)
+    # Optional: only leaf has pos
+    # if not word: node.pos_index = -1
+    
+    # Process word info
+    if word:
+        node.word_index = word_to_index[word]
+    else:
+        node.word_index = -1
+    
+    # Process head info
+    node.head_index = word_to_index[head]
+    node.parent_head_index = -1
     
     # Process ne info
-    span = (sentence_index, start_offset, offset)
-    ne = ner_raw_data[span] if span in ner_raw_data else "NONE"
     node.ne = ne
     ne_count[ne] += 1
     if ne != "NONE": pos_ne_count[pos] += 1
     
-    # Process head info
-    head = head_raw_data[((start_offset,offset), pos)][1]
-    node.word_index = word_to_index[head]
-    node.parent_head_index = -1
-    for child in node.child_list:
-        child.parent_head_index = node.word_index
+    # Process children
+    degree = len(tree.subtrees)
+    for subtree in tree.subtrees:
+        child, child_degree = construct_node(subtree, ner_raw_data, head_raw_data,
+                                                word_to_index, pos_to_index,
+                                                pos_count, ne_count, pos_ne_count,
+                                                sentence_index)
+        node.add_child(child)
+        child.parent_head_index = node.head_index
+        degree = max(degree, child_degree)
     
-    return node, degree, offset
+    return node, degree
 
 def get_tree_data(raw_data, word_to_index, pos_to_index):
     log("get_tree_data()...")
@@ -157,11 +178,14 @@ def get_tree_data(raw_data, word_to_index, pos_to_index):
             ner_raw_data = raw_data[document][part]["ner"]
             for sentence_index, parse in enumerate(raw_data[document][part]["parses"]):
                 head_raw_data = raw_data[document][part]["heads"][sentence_index]
-                root_node, degree, _ = construct_node(
+                root_node, degree = construct_node(
                                         parse, ner_raw_data, head_raw_data,
                                         word_to_index, pos_to_index,
                                         pos_count, ne_count, pos_ne_count,
-                                        sentence_index, 0)
+                                        sentence_index)
+                                        
+                root_node.text = raw_data[document][part]["text"][sentence_index]
+                                        
                 root_list.append(root_node)
                 max_degree = max(max_degree, degree)
             
@@ -184,7 +208,7 @@ def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
     # Read all raw data
     raw_data = {}
     for split in data_split_list:
-        full_path = os.path.join(raw_data_path, split, "data/english/annotations")
+        full_path = os.path.join(raw_data_path, split, "data/english/annotations/bc/cnn")
         config = {"file_suffix": "gold_conll", "dir_prefix": full_path}
         raw_data[split] = load_data(config)
     
@@ -267,11 +291,12 @@ def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
 def get_formatted_input(root_node, degree):
     """ Get inputs with RNN required format
     
-    x: vector; word indices of nodes
-    T: matrix; the tree structure
     y: vector; labels of nodes
+    T: matrix; the tree structure
     p: vector; pos indices of nodes
-    a: vector; word indices of node parents
+    x1: vector; word indices of nodes
+    x2: vector; head word indices of nodes
+    x3: vector; head word indices of node parents
     """
     # Get BFS layers
     layer_list = []
@@ -284,11 +309,12 @@ def get_formatted_input(root_node, degree):
         layer = child_layer
     
     # Extract data from layers bottom-up
-    x = []
-    T = []
     y = []
+    T = []
     p = []
-    a = []
+    x1 = []
+    x2 = []
+    x3 = []
     
     index = -1
     for layer in reversed(layer_list):
@@ -296,43 +322,23 @@ def get_formatted_input(root_node, degree):
             index += 1
             node.index = index
             
-            x.append(node.word_index)
+            y.append(node.label)
             
             child_index_list = [child.index for child in node.child_list]
             T.append(child_index_list + [-1]*(degree-len(node.child_list)) + [node.index])
             
-            y.append(node.label)
-            
             p.append(node.pos_index)
+            x1.append(node.word_index)
+            x2.append(node.head_index)
+            x3.append(node.parent_head_index)
             
-            a.append(node.parent_head_index)
-            
-    x = np.array(x, dtype=np.int32)
-    T = np.array(T, dtype=np.int32)
     y = np.array(y, dtype=np.int32)
+    T = np.array(T, dtype=np.int32)
     p = np.array(p, dtype=np.int32)
-    a = np.array(a, dtype=np.int32)
-    return x, T, y, p, a
-
-def extract_glove_embeddings(glove_file = "glove.840B.300d.txt",
-                             vocabulary_file = "vocabulary.txt"):
-    
-    word_list, word_to_index = read_vocabulary(vocabulary_file)
-    
-    word_list = []
-    embedding_list = []
-    with open(glove_file, "r") as f:
-        for line in f:
-            line = line.strip().split()
-            word = line[0]
-            if word not in word_to_index: continue
-            embedding = np.array([float(i) for i in line[1:]])
-            word_list.append(word)
-            embedding_list.append(embedding)
-    
-    np.save("glove_word.npy", word_list)
-    np.save("glove_embedding.npy", embedding_list)
-    return
+    x1 = np.array(x1, dtype=np.int32)
+    x2 = np.array(x2, dtype=np.int32)
+    x3 = np.array(x3, dtype=np.int32)
+    return y, T, p, x1, x2, x3
     
 if __name__ == "__main__":
     # extract_glove_embeddings()

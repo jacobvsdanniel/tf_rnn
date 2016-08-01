@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import random
+import argparse
 
 import numpy as np
 import tensorflow as tf
@@ -52,11 +53,9 @@ def train():
 
     # Train
     saver = tf.train.Saver()
-    best_score = [0., 0., 0.]
-    best_epoch = 0
+    best_score = (-1, -1, -1)
+    best_epoch = -1
     for epoch in xrange(max_epoches):
-        if epoch - best_epoch > patience:      
-            break
         print "\n<Epoch %d>" % epoch
         
         start_time = time.time()
@@ -70,6 +69,8 @@ def train():
             best_score = score
             best_epoch = epoch
             saver.save(model.sess, "tmp.model")
+        elif epoch-best_epoch > patience:
+            break
     
     print "[best validation] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % best_score
     saver.restore(model.sess, "tmp.model")
@@ -100,9 +101,12 @@ def evaluate_dataset(model, data):
         total_true_postives += true_postives
         total_postives += postives
     
-    precision = total_true_postives / total_postives
+    try:
+        precision = total_true_postives / total_postives
+    except ZeroDivisionError:
+        precision = 1.
     recall = total_true_postives / nes
-    f1 = 2 / (1/precision + 1/recall)
+    f1 = 2*precision*recall / (precision + recall)
     return precision*100, recall*100, f1*100
 
 def evaluate_confusion(model, data):
@@ -134,6 +138,8 @@ def validate():
     
     saver = tf.train.Saver()
     saver.restore(model.sess, "tmp.model")
+    score = evaluate_dataset(model, data["development"])
+    print "[validation] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score
     confusion_matrix = evaluate_confusion(model, data["development"])
     
     ne_list.append("NONE")
@@ -144,10 +150,26 @@ def validate():
     for i in range(19):
         print "%12s" % ne_list[i],
         for j in range(19):
-            print "%4d" % confusion_matrix[i][j],
+            if confusion_matrix[i][j]:
+                print "%4d" % confusion_matrix[i][j],
+            else:
+                print "   .",
         print ""
     return
     
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-m", dest="mode", default="train", choices=["train", "validate"])
+    arg = parser.parse_args()
+    
+    if arg.mode == "train":
+        train()
+    elif arg.mode == "validate":
+        validate()
+    return
+    
 if __name__ == '__main__':
-    train()
-    #validate()
+    main()
+
+    
+    
