@@ -192,11 +192,12 @@ def get_tree_data(raw_data, word_to_index, pos_to_index):
     log(" %d sentences\n" % len(root_list))
     return root_list, max_degree, pos_count, ne_count, pos_ne_count
 
-def label_tree_data(node, pos_ne_to_label):
-    node.label = pos_ne_to_label[(node.pos, node.ne)]
+def label_tree_data(node, pos_to_index, ne_to_index):
+    node.y1 = ne_to_index[node.ne]
+    node.y2 = pos_to_index[node.pos]
         
     for child in node.child_list:
-        label_tree_data(child, pos_ne_to_label)
+        label_tree_data(child, pos_to_index, ne_to_index)
     return
     
 def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
@@ -208,7 +209,7 @@ def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
     # Read all raw data
     raw_data = {}
     for split in data_split_list:
-        full_path = os.path.join(raw_data_path, split, "data/english/annotations/bc/cnn")
+        full_path = os.path.join(raw_data_path, split, "data/english/annotations")
         config = {"file_suffix": "gold_conll", "dir_prefix": full_path}
         raw_data[split] = load_data(config)
     
@@ -273,30 +274,27 @@ def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
         total = total_pos_count[pos]
         print "%6s %6d %7d %5.1f%%" % (pos, count, total, count*100./total)
     
-    # Compute the mapping to label
-    label = 0
-    pos_ne_to_label = {}
-    for ne in ne_list + ["NONE"]:
-        for pos in pos_list:
-            pos_ne_to_label[(pos, ne)] = label
-            label += 1
+    # Compute the mapping to labels
+    ne_to_index["NONE"] = len(ne_to_index)
     
     # Add label to nodes
     for split in data_split_list:
         for root_node in data[split][0]:
-            label_tree_data(root_node, pos_ne_to_label)
+            label_tree_data(root_node, pos_to_index, ne_to_index)
     
-    return data, max_degree, word_to_index, label, len(pos_to_index), ne_list
+    return data, max_degree, word_to_index, len(ne_to_index), len(pos_to_index), ne_list
     
 def get_formatted_input(root_node, degree):
     """ Get inputs with RNN required format
     
-    y: vector; labels of nodes
+    y1: vector; ne labels of nodes
+    y2: vector; pos labels of nodes
     T: matrix; the tree structure
     p: vector; pos indices of nodes
     x1: vector; word indices of nodes
     x2: vector; head word indices of nodes
     x3: vector; head word indices of node parents
+    S: matrix; [sibling, self, sibling] indices of nodes
     """
     # Get BFS layers
     layer_list = []
@@ -309,12 +307,14 @@ def get_formatted_input(root_node, degree):
         layer = child_layer
     
     # Extract data from layers bottom-up
-    y = []
+    y1 = []
+    y2 = []
     T = []
     p = []
     x1 = []
     x2 = []
     x3 = []
+    S_tmp = []
     
     index = -1
     for layer in reversed(layer_list):
@@ -322,26 +322,48 @@ def get_formatted_input(root_node, degree):
             index += 1
             node.index = index
             
-            y.append(node.label)
+            y1.append(node.y1)
+            y2.append(node.y2)
             
             child_index_list = [child.index for child in node.child_list]
-            T.append(child_index_list + [-1]*(degree-len(node.child_list)) + [node.index])
+            T.append(child_index_list + [-1]*(degree-len(node.child_list)))
             
             p.append(node.pos_index)
             x1.append(node.word_index)
             x2.append(node.head_index)
             x3.append(node.parent_head_index)
             
-    y = np.array(y, dtype=np.int32)
+            S_tmp.append([-1] + child_index_list + [-1])
+            
+    y1 = np.array(y1, dtype=np.int32)
+    y2 = np.array(y2, dtype=np.int32)
     T = np.array(T, dtype=np.int32)
     p = np.array(p, dtype=np.int32)
     x1 = np.array(x1, dtype=np.int32)
     x2 = np.array(x2, dtype=np.int32)
     x3 = np.array(x3, dtype=np.int32)
-    return y, T, p, x1, x2, x3
     
+    S = np.zeros((len(y1), 3), dtype=np.int32)
+    for sibling_list in S_tmp:
+        for i in range(1, len(sibling_list)-1):
+            S[sibling_list[i]] = sibling_list[i-1:i+2]
+    
+    return y1, y2, T, p, x1, x2, x3, S
+
+def get_one_hot(a, dimension):
+    samples = len(a)
+    A = np.zeros((samples, dimension), dtype=np.float32)
+    A[np.arange(samples), a] = 1
+    A = A * np.not_equal(a,-1).reshape((samples,1))
+    return A
+
 if __name__ == "__main__":
     # extract_glove_embeddings()
     # extract_conll_vocabulary()
     read_conll_dataset()
     exit()
+    
+    
+    
+    
+    
