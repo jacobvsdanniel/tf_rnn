@@ -138,9 +138,9 @@ def validate():
     
     saver = tf.train.Saver()
     saver.restore(model.sess, "tmp.model")
-    score = evaluate_dataset(model, data["test"])
+    score = evaluate_dataset(model, data["development"])
     print "[validation] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score
-    confusion_matrix = evaluate_confusion(model, data["test"])
+    confusion_matrix = evaluate_confusion(model, data["development"])
     
     ne_list.append("NONE")
     print " "*13,

@@ -62,20 +62,13 @@ class RNN(object):
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
             self.W_h = tf.get_variable("W_h",
                                        [self.config.hidden_dimension,
-                                        self.config.embedding_dimension * (1+self.config.words)
-                                      + self.config.hidden_dimension
-                                      + self.config.pos_dimension])
-            # self.W_h = tf.get_variable("W_h",
-                                       # [self.config.hidden_dimension,
-                                        # self.config.embedding_dimension
-                                      # + self.config.hidden_dimension])
+                                        self.config.embedding_dimension
+                                      + self.config.hidden_dimension * self.config.degree])
             self.b_h = tf.get_variable('b_h', [self.config.hidden_dimension, 1])
         
-        def hidden_unit(x1, C, x2, p):
-            c = tf.reshape(tf.reduce_sum(C, reduction_indices=0), [-1,1])
-            
-            x = tf.concat(0, [x1, c, x2, p])
-            # x = tf.concat(0, [x1, c])
+        def hidden_unit(x1, C):
+            c = tf.reshape(C, [-1,1])
+            x = tf.concat(0, [x1, c])
             h = tf.tanh(tf.matmul(self.W_h, x) + self.b_h)
             return h
         
@@ -100,18 +93,11 @@ class RNN(object):
             x1 = tf.slice(self.X1, [index,0], [1,self.config.embedding_dimension])
             x1 = tf.reshape(x1, [-1, 1])
             
-            x2 = tf.slice(self.X2, [index,0], [1,self.config.embedding_dimension*self.config.words])
-            x2 = tf.reshape(x2, [-1, 1])
-            
-            p = tf.slice(self.P, [index,0], [1,self.config.pos_dimension])
-            p = tf.reshape(p, [-1, 1])
-            
-            c_padded = tf.gather(self.T, index)
-            degree = tf.reduce_sum(tf.cast(tf.not_equal(c_padded, -1), tf.int32))
-            c = tf.slice(c_padded, [0], [degree])
-            C = tf.gather(H, c)
+            dummy_hidden = tf.zeros([1, self.config.hidden_dimension])
+            H_hat = tf.concat(0, [dummy_hidden, H])
+            C = tf.gather(H_hat, tf.gather(self.T, index)+1)
                 
-            h = self.f_h(x1, C, x2, p)
+            h = self.f_h(x1, C)
             h = tf.reshape(h, [1, -1])
             
             upper = tf.zeros([index, self.config.hidden_dimension])
@@ -124,19 +110,11 @@ class RNN(object):
     
     def create_output_unit(self):
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
-            # self.W_o = tf.get_variable("W_o",
-                            # [self.config.output_dimension,
-                             # self.config.hidden_dimension*self.config.siblings
-                           # + self.config.pos_dimension
-                           # + self.config.embedding_dimension*self.config.words])
             self.W_o = tf.get_variable("W_o",
                             [self.config.output_dimension,
-                             self.config.hidden_dimension*self.config.siblings])
-            # self.W_o = tf.get_variable("W_o",
-                            # [self.config.output_dimension,
-                             # self.config.hidden_dimension*self.config.siblings
-                           # + self.config.pos_dimension])
-            
+                             self.config.hidden_dimension*self.config.siblings
+                           + self.config.pos_dimension
+                           + self.config.embedding_dimension*self.config.words])
             self.b_o = tf.get_variable('b_o', [self.config.output_dimension, 1])
             
         def output_unit(H):
@@ -145,13 +123,8 @@ class RNN(object):
             H_hat = tf.gather(H_hat, self.S+1)
             H_hat = tf.reshape(H_hat, [-1, self.config.hidden_dimension*self.config.siblings])
             
-            # X = tf.concat(1, [H_hat, self.P, self.X2])
-            # O = tf.matmul(X, self.W_o, transpose_b=True) + tf.reshape(self.b_o, [-1])
-            
-            O = tf.matmul(H_hat, self.W_o, transpose_b=True) + tf.reshape(self.b_o, [-1])
-            
-            # X = tf.concat(1, [H_hat, self.P])
-            # O = tf.matmul(X, self.W_o, transpose_b=True) + tf.reshape(self.b_o, [-1])
+            X = tf.concat(1, [H_hat, self.P, self.X2])
+            O = tf.matmul(X, self.W_o, transpose_b=True) + tf.reshape(self.b_o, [-1])
             return O
         
         self.f_o = output_unit

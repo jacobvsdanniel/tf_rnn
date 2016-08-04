@@ -7,6 +7,7 @@ import numpy as np
 
 sys.path.append("../CONLL2012-intern")
 from load_conll import load_data
+from pstree import PSTree
 
 class Node(object):
     def __init__(self):
@@ -121,16 +122,17 @@ def construct_node(tree, ner_raw_data, head_raw_data, text_raw_data,
     pos = tree.label
     word = tree.word
     span = tree.span
+    if hasattr(tree, "head"): 
+        head = tree.head
+    else:
+        head = head_raw_data[(span, pos)][1]
     sentence_span = (sentence_index, span[0], span[1])
-    head = head_raw_data[(span, pos)][1]
     ne = ner_raw_data[sentence_span] if sentence_span in ner_raw_data else "NONE"
     
     # Process pos info
     node.pos = pos
     node.pos_index = pos_to_index[pos]
     pos_count[pos] += 1
-    
-    # Optional: only leaf has pos
     # if not word: node.pos_index = -1
     
     # Process word info
@@ -158,6 +160,24 @@ def construct_node(tree, ner_raw_data, head_raw_data, text_raw_data,
     node.ne = ne
     ne_count[ne] += 1
     if ne != "NONE": pos_ne_count[pos] += 1
+    
+    # Binarize children
+    degree = len(tree.subtrees)
+    if degree > 2:
+        side_child_pos = tree.subtrees[-1].label
+        side_child_span = tree.subtrees[-1].span
+        side_child_head = head_raw_data[(side_child_span, side_child_pos)][1]
+        if side_child_head != head:
+            sub_subtrees = tree.subtrees[:-1]
+        else:
+            sub_subtrees = tree.subtrees[1:]
+        new_span = (sub_subtrees[0].span[0], sub_subtrees[-1].span[1])
+        new_tree = PSTree(label=pos, span=new_span, subtrees=sub_subtrees)
+        new_tree.head = head
+        if side_child_head != head:
+            tree.subtrees = [new_tree, tree.subtrees[-1]]
+        else:
+            tree.subtrees = [tree.subtrees[0], new_tree]
     
     # Process children
     degree = len(tree.subtrees)
