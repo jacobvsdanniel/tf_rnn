@@ -69,7 +69,7 @@ def train():
             best_score = score
             best_epoch = epoch
             saver.save(model.sess, "tmp.model")
-        elif epoch-best_epoch > patience:
+        elif epoch-best_epoch >= patience:
             break
     
     print "[best validation] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % best_score
@@ -138,9 +138,9 @@ def validate():
     
     saver = tf.train.Saver()
     saver.restore(model.sess, "tmp.model")
-    score = evaluate_dataset(model, data["development"])
+    score = evaluate_dataset(model, data["test"])
     print "[validation] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score
-    confusion_matrix = evaluate_confusion(model, data["development"])
+    confusion_matrix = evaluate_confusion(model, data["test"])
     
     ne_list.append("NONE")
     print " "*13,

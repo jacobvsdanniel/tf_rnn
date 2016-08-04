@@ -8,7 +8,8 @@ class Config(object):
     def __init__(self, pos_dimension=5, vocabulary_size=5, embedding_dimension=300,
                  hidden_dimension=300,
                  output_dimension=2, degree=2,
-                 learning_rate=0.001):
+                 learning_rate=0.001,
+                 siblings=3, words=2):
         self.pos_dimension = pos_dimension
         self.vocabulary_size = vocabulary_size
         self.embedding_dimension = embedding_dimension
@@ -16,6 +17,8 @@ class Config(object):
         self.output_dimension = output_dimension
         self.degree = degree
         self.learning_rate = learning_rate
+        self.siblings = siblings
+        self.words = words
         return
         
 class RNN(object):
@@ -41,9 +44,8 @@ class RNN(object):
         self.T = tf.placeholder(tf.int32, [None, self.config.degree])
         self.P = tf.placeholder(tf.float32, [None, self.config.pos_dimension])
         self.x1 = tf.placeholder(tf.int32, [None])
-        self.x2 = tf.placeholder(tf.int32, [None])
-        self.x3 = tf.placeholder(tf.int32, [None])
-        self.S = tf.placeholder(tf.int32, [None, 3])
+        self.x2 = tf.placeholder(tf.int32, [None, self.config.words])
+        self.S = tf.placeholder(tf.int32, [None, self.config.siblings])
         
         with tf.variable_scope("RNN", initializer=tf.random_normal_initializer(stddev=0.1)):
             self.L = tf.get_variable("L",
@@ -53,24 +55,28 @@ class RNN(object):
         L_hat = tf.concat(0, [dummy_embedding, self.L])
         self.X1 = tf.gather(L_hat, self.x1+1)
         self.X2 = tf.gather(L_hat, self.x2+1)
-        self.X3 = tf.gather(L_hat, self.x3+1)
+        self.X2 = tf.reshape(self.X2, [-1, self.config.embedding_dimension*self.config.words])
         return
     
     def create_hidden_unit(self):
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
-            self.W_hx = tf.get_variable("W_hx",
-                                        [self.config.hidden_dimension,
-                                         self.config.embedding_dimension])
-            self.W_hh = tf.get_variable("W_hh",
-                                        [self.config.hidden_dimension,
-                                         self.config.hidden_dimension])
+            self.W_h = tf.get_variable("W_h",
+                                       [self.config.hidden_dimension,
+                                        self.config.embedding_dimension * (1+self.config.words)
+                                      + self.config.hidden_dimension
+                                      + self.config.pos_dimension])
+            # self.W_h = tf.get_variable("W_h",
+                                       # [self.config.hidden_dimension,
+                                        # self.config.embedding_dimension
+                                      # + self.config.hidden_dimension])
             self.b_h = tf.get_variable('b_h', [self.config.hidden_dimension, 1])
         
-        def hidden_unit(x1, C):
+        def hidden_unit(x1, C, x2, p):
             c = tf.reshape(tf.reduce_sum(C, reduction_indices=0), [-1,1])
-            h = tf.tanh(tf.matmul(self.W_hx, x1)
-                      + tf.matmul(self.W_hh, c)
-                      + self.b_h)
+            
+            x = tf.concat(0, [x1, c, x2, p])
+            # x = tf.concat(0, [x1, c])
+            h = tf.tanh(tf.matmul(self.W_h, x) + self.b_h)
             return h
         
         self.f_h = hidden_unit
@@ -84,8 +90,6 @@ class RNN(object):
         self.create_hidden_unit()
         
         nodes = tf.shape(self.x1)[0]
-        leaves = nodes - tf.shape(self.T)[0]
-        
         index = tf.constant(0)
         H = tf.zeros([nodes, self.config.hidden_dimension])
         
@@ -96,17 +100,18 @@ class RNN(object):
             x1 = tf.slice(self.X1, [index,0], [1,self.config.embedding_dimension])
             x1 = tf.reshape(x1, [-1, 1])
             
-            def get_C():
-                c_padded = tf.gather(self.T, index-leaves)
-                degree = tf.reduce_sum(tf.cast(tf.not_equal(c_padded, -1), tf.int32))
-                c = tf.slice(c_padded, [0], [degree])
-                C = tf.gather(H, c)
-                return C
-            C = tf.cond(index < leaves,
-                        lambda: tf.zeros([self.config.degree, self.config.hidden_dimension]),
-                        get_C)
+            x2 = tf.slice(self.X2, [index,0], [1,self.config.embedding_dimension*self.config.words])
+            x2 = tf.reshape(x2, [-1, 1])
             
-            h = self.f_h(x1, C)
+            p = tf.slice(self.P, [index,0], [1,self.config.pos_dimension])
+            p = tf.reshape(p, [-1, 1])
+            
+            c_padded = tf.gather(self.T, index)
+            degree = tf.reduce_sum(tf.cast(tf.not_equal(c_padded, -1), tf.int32))
+            c = tf.slice(c_padded, [0], [degree])
+            C = tf.gather(H, c)
+                
+            h = self.f_h(x1, C, x2, p)
             h = tf.reshape(h, [1, -1])
             
             upper = tf.zeros([index, self.config.hidden_dimension])
@@ -119,19 +124,34 @@ class RNN(object):
     
     def create_output_unit(self):
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
+            # self.W_o = tf.get_variable("W_o",
+                            # [self.config.output_dimension,
+                             # self.config.hidden_dimension*self.config.siblings
+                           # + self.config.pos_dimension
+                           # + self.config.embedding_dimension*self.config.words])
             self.W_o = tf.get_variable("W_o",
-                            [self.config.output_dimension, self.config.hidden_dimension*3
-                                                         + self.config.pos_dimension
-                                                         + self.config.embedding_dimension*2])
+                            [self.config.output_dimension,
+                             self.config.hidden_dimension*self.config.siblings])
+            # self.W_o = tf.get_variable("W_o",
+                            # [self.config.output_dimension,
+                             # self.config.hidden_dimension*self.config.siblings
+                           # + self.config.pos_dimension])
+            
             self.b_o = tf.get_variable('b_o', [self.config.output_dimension, 1])
-        
+            
         def output_unit(H):
             dummy_hidden = tf.zeros([1, self.config.hidden_dimension])
             H_hat = tf.concat(0, [dummy_hidden, H])
-            H_window = tf.reshape(tf.gather(H_hat, self.S+1), [-1, self.config.hidden_dimension*3])
+            H_hat = tf.gather(H_hat, self.S+1)
+            H_hat = tf.reshape(H_hat, [-1, self.config.hidden_dimension*self.config.siblings])
             
-            X = tf.concat(1, [H_window, self.P, self.X2, self.X3])
-            O = tf.matmul(X, self.W_o, transpose_b=True) + tf.reshape(self.b_o, [-1])
+            # X = tf.concat(1, [H_hat, self.P, self.X2])
+            # O = tf.matmul(X, self.W_o, transpose_b=True) + tf.reshape(self.b_o, [-1])
+            
+            O = tf.matmul(H_hat, self.W_o, transpose_b=True) + tf.reshape(self.b_o, [-1])
+            
+            # X = tf.concat(1, [H_hat, self.P])
+            # O = tf.matmul(X, self.W_o, transpose_b=True) + tf.reshape(self.b_o, [-1])
             return O
         
         self.f_o = output_unit
@@ -157,23 +177,22 @@ class RNN(object):
         Get integer labels from the tree and transform them to one-hot arrays.
         In (edge) case there are no internal nodes, we make sure T has rank 2.
         """
-        y1, y2, T, p, x1, x2, x3, S = conll_utils.get_formatted_input(
-                                        root_node, self.config.degree)
+        y1, y2, T, p, x1, x2, S = conll_utils.get_formatted_input(
+                                            root_node, self.config.degree)
         Y = conll_utils.get_one_hot(y1, self.config.output_dimension)
         P = conll_utils.get_one_hot(p, self.config.pos_dimension)
         
         loss, _ = self.sess.run([self.loss, self.update_op],
-                    feed_dict={self.y:Y, self.T:T, self.P:P, self.x1:x1, self.x2:x2, self.x3:x3,
-                                self.S:S})
+                    feed_dict={self.y:Y, self.T:T, self.P:P, self.x1:x1, self.x2:x2, self.S:S})
         return loss
     
     def evaluate(self, root_node):
-        y1, y2, T, p, x1, x2, x3, S = conll_utils.get_formatted_input(
-                                        root_node, self.config.degree)
+        y1, y2, T, p, x1, x2, S = conll_utils.get_formatted_input(
+                                            root_node, self.config.degree)
         P = conll_utils.get_one_hot(p, self.config.pos_dimension)
         
         y_hat = self.sess.run(self.y_hat,
-                    feed_dict={self.T:T, self.P:P, self.x1:x1, self.x2:x2, self.x3:x3, self.S:S})
+                    feed_dict={self.T:T, self.P:P, self.x1:x1, self.x2:x2, self.S:S})
         y_hat_int = np.argmax(y_hat, axis=1)
         
         correct_array = (y_hat_int == y1)
@@ -183,12 +202,12 @@ class RNN(object):
         return true_postives, np.sum(postive_array)
     
     def predict(self, root_node):
-        y1, y2, T, p, x1, x2, x3, S = conll_utils.get_formatted_input(
-                                        root_node, self.config.degree)
+        y1, y2, T, p, x1, x2, S = conll_utils.get_formatted_input(
+                                            root_node, self.config.degree)
         P = conll_utils.get_one_hot(p, self.config.pos_dimension)
         
         y_hat = self.sess.run(self.y_hat,
-                    feed_dict={self.T:T, self.P:P, self.x1:x1, self.x2:x2, self.x3:x3, self.S:S})
+                    feed_dict={self.T:T, self.P:P, self.x1:x1, self.x2:x2, self.S:S})
         y_hat_int = np.argmax(y_hat, axis=1)
         
         confusion_matrix = np.zeros([19, 19], dtype=np.int32)

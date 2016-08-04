@@ -108,12 +108,12 @@ def read_ne(ne_file):
     log(" %d ne\n" % len(ne_to_index))
     return ne_list, ne_to_index
 
-def construct_node(tree, ner_raw_data, head_raw_data,
+def construct_node(tree, ner_raw_data, head_raw_data, text_raw_data,
                     word_to_index, pos_to_index,
                     pos_count, ne_count, pos_ne_count,
                     sentence_index):
     if len(tree.subtrees) == 1:
-        return construct_node(tree.subtrees[0], ner_raw_data, head_raw_data,
+        return construct_node(tree.subtrees[0], ner_raw_data, head_raw_data, text_raw_data,
                                 word_to_index, pos_to_index,
                                 pos_count, ne_count, pos_ne_count,
                                 sentence_index)
@@ -139,6 +139,17 @@ def construct_node(tree, ner_raw_data, head_raw_data,
     else:
         node.word_index = -1
     
+    window = 0
+    node.window_index_list = [-1] * (2*window)
+    for i in range(window):
+        index = span[0]-1-i
+        if index < 0: break
+        node.window_index_list[window-1-i] = word_to_index[text_raw_data[index]]
+    for i in range(window):
+        index = span[1]+i
+        if index >= len(text_raw_data): break
+        node.window_index_list[window+i] = word_to_index[text_raw_data[index]]
+    
     # Process head info
     node.head_index = word_to_index[head]
     node.parent_head_index = -1
@@ -151,7 +162,7 @@ def construct_node(tree, ner_raw_data, head_raw_data,
     # Process children
     degree = len(tree.subtrees)
     for subtree in tree.subtrees:
-        child, child_degree = construct_node(subtree, ner_raw_data, head_raw_data,
+        child, child_degree = construct_node(subtree, ner_raw_data, head_raw_data, text_raw_data,
                                                 word_to_index, pos_to_index,
                                                 pos_count, ne_count, pos_ne_count,
                                                 sentence_index)
@@ -178,8 +189,9 @@ def get_tree_data(raw_data, word_to_index, pos_to_index):
             ner_raw_data = raw_data[document][part]["ner"]
             for sentence_index, parse in enumerate(raw_data[document][part]["parses"]):
                 head_raw_data = raw_data[document][part]["heads"][sentence_index]
+                text_raw_data = raw_data[document][part]["text"][sentence_index]
                 root_node, degree = construct_node(
-                                        parse, ner_raw_data, head_raw_data,
+                                        parse, ner_raw_data, head_raw_data, text_raw_data,
                                         word_to_index, pos_to_index,
                                         pos_count, ne_count, pos_ne_count,
                                         sentence_index)
@@ -292,9 +304,8 @@ def get_formatted_input(root_node, degree):
     T: matrix; the tree structure
     p: vector; pos indices of nodes
     x1: vector; word indices of nodes
-    x2: vector; head word indices of nodes
-    x3: vector; head word indices of node parents
-    S: matrix; [sibling, self, sibling] indices of nodes
+    x2: matrix; head word indices + parent head word indices + neighbor word indices
+    S: matrix; [sibling]*siblings + [self] + [sibling]*siblings indices of nodes
     """
     # Get BFS layers
     layer_list = []
@@ -313,8 +324,9 @@ def get_formatted_input(root_node, degree):
     p = []
     x1 = []
     x2 = []
-    x3 = []
+    
     S_tmp = []
+    siblings = 1
     
     index = -1
     for layer in reversed(layer_list):
@@ -330,10 +342,9 @@ def get_formatted_input(root_node, degree):
             
             p.append(node.pos_index)
             x1.append(node.word_index)
-            x2.append(node.head_index)
-            x3.append(node.parent_head_index)
+            x2.append([node.head_index, node.parent_head_index] + node.window_index_list)
             
-            S_tmp.append([-1] + child_index_list + [-1])
+            S_tmp.append([-1]*siblings + child_index_list + [-1]*siblings)
             
     y1 = np.array(y1, dtype=np.int32)
     y2 = np.array(y2, dtype=np.int32)
@@ -341,14 +352,13 @@ def get_formatted_input(root_node, degree):
     p = np.array(p, dtype=np.int32)
     x1 = np.array(x1, dtype=np.int32)
     x2 = np.array(x2, dtype=np.int32)
-    x3 = np.array(x3, dtype=np.int32)
     
-    S = np.zeros((len(y1), 3), dtype=np.int32)
+    S = np.zeros((len(y1), 2*siblings+1), dtype=np.int32)
     for sibling_list in S_tmp:
-        for i in range(1, len(sibling_list)-1):
-            S[sibling_list[i]] = sibling_list[i-1:i+2]
+        for i in range(siblings, len(sibling_list)-siblings):
+            S[sibling_list[i]] = sibling_list[i-siblings:i+siblings+1]
     
-    return y1, y2, T, p, x1, x2, x3, S
+    return y1, y2, T, p, x1, x2, S
 
 def get_one_hot(a, dimension):
     samples = len(a)
