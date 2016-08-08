@@ -7,7 +7,6 @@ import numpy as np
 
 sys.path.append("../CONLL2012-intern")
 from load_conll import load_data
-from pstree import PSTree
 
 class Node(object):
     def __init__(self):
@@ -109,25 +108,18 @@ def read_ne(ne_file):
     log(" %d ne\n" % len(ne_to_index))
     return ne_list, ne_to_index
 
-def construct_node(tree, ner_raw_data, head_raw_data, text_raw_data,
+def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
                     word_to_index, pos_to_index,
-                    pos_count, ne_count, pos_ne_count,
-                    sentence_index):
-    if len(tree.subtrees) == 1:
-        return construct_node(tree.subtrees[0], ner_raw_data, head_raw_data, text_raw_data,
-                                word_to_index, pos_to_index,
-                                pos_count, ne_count, pos_ne_count,
-                                sentence_index)
-    node = Node()
+                    pos_count, ne_count, pos_ne_count):
+    # if len(tree.subtrees) == 1:
+        # return construct_node(node, tree.subtrees[0], ner_raw_data, head_raw_data, text_raw_data,
+                                # word_to_index, pos_to_index,
+                                # pos_count, ne_count, pos_ne_count)
     pos = tree.label
     word = tree.word
     span = tree.span
-    if hasattr(tree, "head"): 
-        head = tree.head
-    else:
-        head = head_raw_data[(span, pos)][1]
-    sentence_span = (sentence_index, span[0], span[1])
-    ne = ner_raw_data[sentence_span] if sentence_span in ner_raw_data else "NONE"
+    head = tree.head if hasattr(tree, "head") else head_raw_data[(span, pos)][1]
+    ne = ner_raw_data[span] if span in ner_raw_data else "NONE"
     
     # Process pos info
     node.pos = pos
@@ -154,43 +146,44 @@ def construct_node(tree, ner_raw_data, head_raw_data, text_raw_data,
     
     # Process head info
     node.head_index = word_to_index[head]
-    node.parent_head_index = -1
     
     # Process ne info
     node.ne = ne
     ne_count[ne] += 1
     if ne != "NONE": pos_ne_count[pos] += 1
     
+    # Process chunk info
+    node.span = span
+    
     # Binarize children
-    degree = len(tree.subtrees)
-    if degree > 2:
-        side_child_pos = tree.subtrees[-1].label
-        side_child_span = tree.subtrees[-1].span
-        side_child_head = head_raw_data[(side_child_span, side_child_pos)][1]
-        if side_child_head != head:
-            sub_subtrees = tree.subtrees[:-1]
-        else:
-            sub_subtrees = tree.subtrees[1:]
-        new_span = (sub_subtrees[0].span[0], sub_subtrees[-1].span[1])
-        new_tree = PSTree(label=pos, span=new_span, subtrees=sub_subtrees)
-        new_tree.head = head
-        if side_child_head != head:
-            tree.subtrees = [new_tree, tree.subtrees[-1]]
-        else:
-            tree.subtrees = [tree.subtrees[0], new_tree]
-    
+    # degree = len(tree.subtrees)
+    # if degree > 2:
+        # side_child_pos = tree.subtrees[-1].label
+        # side_child_span = tree.subtrees[-1].span
+        # side_child_head = head_raw_data[(side_child_span, side_child_pos)][1]
+        # if side_child_head != head:
+            # sub_subtrees = tree.subtrees[:-1]
+        # else:
+            # sub_subtrees = tree.subtrees[1:]
+        # new_span = (sub_subtrees[0].span[0], sub_subtrees[-1].span[1])
+        # new_tree = PSTree(label=pos, span=new_span, subtrees=sub_subtrees)
+        # new_tree.head = head
+        # if side_child_head != head:
+            # tree.subtrees = [new_tree, tree.subtrees[-1]]
+        # else:
+            # tree.subtrees = [tree.subtrees[0], new_tree]
+            
     # Process children
-    degree = len(tree.subtrees)
+    node.degree = len(tree.subtrees)
+    max_degree = node.degree
     for subtree in tree.subtrees:
-        child, child_degree = construct_node(subtree, ner_raw_data, head_raw_data, text_raw_data,
-                                                word_to_index, pos_to_index,
-                                                pos_count, ne_count, pos_ne_count,
-                                                sentence_index)
+        child = Node()
         node.add_child(child)
-        child.parent_head_index = node.head_index
-        degree = max(degree, child_degree)
-    
-    return node, degree
+        child_degree = construct_node(child, subtree, ner_raw_data, head_raw_data, text_raw_data,
+                                        word_to_index, pos_to_index,
+                                        pos_count, ne_count, pos_ne_count)
+        max_degree = max(max_degree, child_degree)
+    return max_degree
 
 def get_tree_data(raw_data, word_to_index, pos_to_index):
     log("get_tree_data()...")
@@ -199,6 +192,7 @@ def get_tree_data(raw_data, word_to_index, pos_to_index):
     Stores into Node data structure
     """
     root_list = []
+    ner_list = []
     max_degree = 0
     pos_count = defaultdict(lambda: 0)
     ne_count = defaultdict(lambda: 0)
@@ -206,23 +200,27 @@ def get_tree_data(raw_data, word_to_index, pos_to_index):
     
     for document in raw_data:
         for part in raw_data[document]:
-            ner_raw_data = raw_data[document][part]["ner"]
-            for sentence_index, parse in enumerate(raw_data[document][part]["parses"]):
-                head_raw_data = raw_data[document][part]["heads"][sentence_index]
-                text_raw_data = raw_data[document][part]["text"][sentence_index]
-                root_node, degree = construct_node(
-                                        parse, ner_raw_data, head_raw_data, text_raw_data,
-                                        word_to_index, pos_to_index,
-                                        pos_count, ne_count, pos_ne_count,
-                                        sentence_index)
-                                        
-                root_node.text = raw_data[document][part]["text"][sentence_index]
+            ner_raw_data = defaultdict(lambda: {})
+            for k, v in raw_data[document][part]["ner"].iteritems():
+                ner_raw_data[k[0]][(k[1], k[2])] = v
+            
+            for index, parse in enumerate(raw_data[document][part]["parses"]):
+                head_raw_data = raw_data[document][part]["heads"][index]
+                text_raw_data = raw_data[document][part]["text"][index]
+                
+                root_node = Node()
+                degree = construct_node(
+                            root_node, parse, ner_raw_data[index], head_raw_data, text_raw_data,
+                            word_to_index, pos_to_index,
+                            pos_count, ne_count, pos_ne_count)
+                max_degree = max(max_degree, degree)
+                root_node.text = raw_data[document][part]["text"][index]
                                         
                 root_list.append(root_node)
-                max_degree = max(max_degree, degree)
-            
+                ner_list.append(ner_raw_data[index])
+                
     log(" %d sentences\n" % len(root_list))
-    return root_list, max_degree, pos_count, ne_count, pos_ne_count
+    return root_list, max_degree, pos_count, ne_count, pos_ne_count, ner_list
 
 def label_tree_data(node, pos_to_index, ne_to_index):
     node.y1 = ne_to_index[node.ne]
@@ -261,13 +259,13 @@ def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
     ne_count = {}
     pos_ne_count = {}
     for split in data_split_list:
-        tree_data, degree, pos_count[split], ne_count[split], pos_ne_count[split] = (
+        tree_data, degree, pos_count[split], ne_count[split], pos_ne_count[split], ner_list = (
             get_tree_data(raw_data[split], word_to_index, pos_to_index))
         sentences = len(tree_data)
         nodes = sum(pos_count[split].itervalues())
         nes = sum(pos_ne_count[split].itervalues())
         max_degree = max(max_degree, degree)
-        data[split] = [tree_data, nodes, nes]
+        data[split] = [tree_data, nodes, nes, ner_list]
         log("<%s>\n  %d sentences; %d nodes; %d named entities\n"
             % (split, sentences, nodes, nes))
     log("degree %d\n" % max_degree)
@@ -283,6 +281,13 @@ def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
     for count, pos in get_sorted_dict(total_pos_count):
         print "%6s %7d %5.1f%%" % (pos, count, count*100./nodes)
     
+    # Real total nes
+    reals = 0
+    for split in data_split_list:
+        for ner_dict in data[split][3]:
+            reals += len(ner_dict)
+    print "\n[Real] Total %d named entities" % reals
+        
     # Show NE distribution
     total_ne_count = defaultdict(lambda: 0)
     for split in data_split_list:
@@ -344,6 +349,7 @@ def get_formatted_input(root_node, degree):
     p = []
     x1 = []
     x2 = []
+    chunk = []
     
     S_tmp = []
     siblings = 1
@@ -354,16 +360,24 @@ def get_formatted_input(root_node, degree):
             index += 1
             node.index = index
             
+            if node.parent:
+                node.parent_pos_index = node.parent.pos_index
+                node.parent_head_index = node.parent.head_index
+            else:
+                node.parent_pos_index = -1
+                node.parent_head_index = -1
+                
             y1.append(node.y1)
             y2.append(node.y2)
             
             child_index_list = [child.index for child in node.child_list]
             T.append(child_index_list + [-1]*(degree-len(node.child_list)))
             
-            p.append(node.pos_index)
+            # p.append([node.pos_index, node.parent_pos_index])
+            p.append([node.pos_index])
             x1.append(node.word_index)
             x2.append([node.head_index, node.parent_head_index] + node.window_index_list)
-            
+            chunk.append(node.span)
             S_tmp.append([-1]*siblings + child_index_list + [-1]*siblings)
             
     y1 = np.array(y1, dtype=np.int32)
@@ -378,7 +392,7 @@ def get_formatted_input(root_node, degree):
         for i in range(siblings, len(sibling_list)-siblings):
             S[sibling_list[i]] = sibling_list[i-siblings:i+siblings+1]
     
-    return y1, y2, T, p, x1, x2, S
+    return y1, y2, T, p, x1, x2, S, chunk
 
 def get_one_hot(a, dimension):
     samples = len(a)
