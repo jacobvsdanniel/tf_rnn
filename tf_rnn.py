@@ -15,7 +15,7 @@ class Config(object):
         self.hidden_dimension = 300
         self.output_dimension = 2
         self.degree = 2
-        self.siblings = 3
+        self.node_features = 3
         self.word_features = 2
         self.pos_features = 1
         self.learning_rate = 1e-3
@@ -51,7 +51,7 @@ class RNN(object):
         self.p = tf.placeholder(tf.int32, [None, self.pos_features])
         self.x1 = tf.placeholder(tf.int32, [None])
         self.x2 = tf.placeholder(tf.int32, [None, self.word_features])
-        self.S = tf.placeholder(tf.int32, [None, self.siblings])
+        self.S = tf.placeholder(tf.int32, [None, self.node_features])
         
         with tf.variable_scope("RNN", initializer=tf.random_normal_initializer(stddev=0.1)):
             self.L = tf.get_variable("L",
@@ -132,14 +132,14 @@ class RNN(object):
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
             self.W_o = tf.get_variable("W_o",
                             [self.output_dimension,
-                             self.hidden_dimension*self.siblings])
+                             self.hidden_dimension*self.node_features])
             self.b_o = tf.get_variable('b_o', [self.output_dimension, 1])
             
         def output_unit(H):
             dummy_hidden = tf.zeros([1, self.hidden_dimension])
             H_hat = tf.concat(0, [dummy_hidden, H])
             H_hat = tf.gather(H_hat, self.S+1)
-            H_hat = tf.reshape(H_hat, [-1, self.hidden_dimension*self.siblings])
+            H_hat = tf.reshape(H_hat, [-1, self.hidden_dimension*self.node_features])
             # X = tf.concat(1, [H_hat, self.X2, self.P])
             O = tf.matmul(H_hat, self.W_o, transpose_b=True) + tf.reshape(self.b_o, [-1])
             return O

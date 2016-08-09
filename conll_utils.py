@@ -214,7 +214,7 @@ def get_tree_data(raw_data, word_to_index, pos_to_index):
                             word_to_index, pos_to_index,
                             pos_count, ne_count, pos_ne_count)
                 max_degree = max(max_degree, degree)
-                root_node.text = raw_data[document][part]["text"][index]
+                # root_node.text = raw_data[document][part]["text"][index]
                                         
                 root_list.append(root_node)
                 ner_list.append(ner_raw_data[index])
@@ -377,6 +377,7 @@ def get_formatted_input(root_node, degree):
             p.append([node.pos_index])
             x1.append(node.word_index)
             x2.append([node.head_index, node.parent_head_index] + node.window_index_list)
+            # x2.append([node.head_index] + node.window_index_list)
             chunk.append(node.span)
             S_tmp.append([-1]*siblings + child_index_list + [-1]*siblings)
             
@@ -387,11 +388,14 @@ def get_formatted_input(root_node, degree):
     x1 = np.array(x1, dtype=np.int32)
     x2 = np.array(x2, dtype=np.int32)
     
-    S = np.zeros((len(y1), 2*siblings+1), dtype=np.int32)
-    for sibling_list in S_tmp:
-        for i in range(siblings, len(sibling_list)-siblings):
-            S[sibling_list[i]] = sibling_list[i-siblings:i+siblings+1]
-    
+    S = np.ones((len(y1), 2*siblings+1), dtype=np.int32) * -1
+    # S = np.ones((len(y1), 2*siblings+2), dtype=np.int32) * -1
+    for index, child_index_list in enumerate(S_tmp):
+        for i in range(siblings, len(child_index_list)-siblings):
+            S[child_index_list[i]] = child_index_list[i-siblings:i+siblings+1]
+            # S[child_index_list[i],:-1] = child_index_list[i-siblings:i+siblings+1]
+            # S[child_index_list[i], -1] = index
+    S[-1,1] = len(y1) - 1
     return y1, y2, T, p, x1, x2, S, chunk
 
 def get_one_hot(a, dimension):
