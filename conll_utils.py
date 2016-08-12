@@ -1,3 +1,4 @@
+import re
 import os
 import sys
 import codecs
@@ -5,12 +6,13 @@ from collections import defaultdict
 
 import numpy as np
 
-sys.path.append("../CONLL2012-intern")
+sys.path.append("../../CONLL2012-intern")
 from load_conll import load_data
+from pstree import PSTree
 
 class Node(object):
     def __init__(self):
-        self.parent = None
+        self.parent = self
         self.child_list = []
         
     def add_child(self, child):
@@ -25,7 +27,47 @@ def log(msg):
 def get_sorted_dict(d):
     return sorted(zip(*reversed(zip(*d.iteritems()))), reverse=True)
 
-def extract_glove_embeddings(glove_file = "glove.840B.300d.txt",
+def get_mapped_word(word):
+    if not word: return word, -1
+    case = get_case_info(word)
+    # word = word.lower()
+    # word = re.sub("\d+", "NUMBER", word.lower())
+    return word, case
+
+def get_case_info(word):
+    if word.isupper():
+        return 0
+    if word.islower():
+        return 1
+    if word[0].isupper():
+        return 2
+    else:
+        return 3
+
+def extract_collobert_embeddings(
+        embedding_file = "/home/danniel/Downloads/senna/embeddings/embeddings.txt",
+        word_file = "/home/danniel/Downloads/senna/hash/words.lst",
+        vocabulary_file = "vocabulary.txt"):
+    
+    word_list, word_to_index = read_vocabulary(vocabulary_file)
+    
+    word_list = []
+    embedding_list = []
+    with open(word_file, "r") as fw, open(embedding_file, "r") as fe:
+        while True:
+            word = fw.readline().strip()
+            embedding = fe.readline().strip().split()
+            if not word: break
+            if word not in word_to_index: continue
+            embedding = np.array([float(i) for i in embedding])
+            word_list.append(word)
+            embedding_list.append(embedding)
+    
+    np.save("collobert_word.npy", word_list)
+    np.save("collobert_embedding.npy", embedding_list)
+    return
+        
+def extract_glove_embeddings(glove_file = "../glove.840B.300d.txt",
                              vocabulary_file = "vocabulary.txt"):
     
     word_list, word_to_index = read_vocabulary(vocabulary_file)
@@ -45,10 +87,12 @@ def extract_glove_embeddings(glove_file = "glove.840B.300d.txt",
     np.save("glove_embedding.npy", embedding_list)
     return
     
-def extract_conll_vocabulary(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
-                             vocabulary_file = "vocabulary.txt"):
+def extract_conll_vocabulary(raw_data_path = "../../CONLL2012-intern/conll-2012/v4/data",
+                             vocabulary_file = "vocabulary.txt",
+                             character_file = "character.txt"):
     log("extract_conll_vocabulary()...")
     
+    character_set = set()
     vocabulary_set = set()
     for split in ["train", "development", "test"]:
         full_path = os.path.join(raw_data_path, split, "data/english/annotations")
@@ -57,15 +101,36 @@ def extract_conll_vocabulary(raw_data_path = "../CONLL2012-intern/conll-2012/v4/
         for document in raw_data:
             for part in raw_data[document]:
                 for sentence in raw_data[document][part]["text"]:
-                    vocabulary_set |= set(sentence)
+                    for word in sentence:
+                        for character in word:
+                            character_set.add(character)
+                        vocabulary_set.add(get_mapped_word(word)[0])
     
     with codecs.open(vocabulary_file, "w", encoding="utf8") as f:
         for word in sorted(vocabulary_set):
             f.write(word + '\n')
-        
+    
+    with codecs.open(character_file, "w", encoding="utf8") as f:
+        for character in sorted(character_set):
+            f.write(character + '\n')
+    
     log(" done\n")
     return
+
+def read_character(character_file):
+    log("read_character()...")
     
+    character_list = []
+    character_to_index = {}
+    with codecs.open(character_file, "r", encoding="utf8") as f:
+        for line in f.readlines():
+            character = line[0]
+            character_to_index[character] = len(character_list)
+            character_list.append(character)
+    
+    log(" %d characters\n" % len(character_to_index))
+    return character_list, character_to_index
+
 def read_vocabulary(vocabulary_file):
     log("read_vocabulary()...")
     
@@ -109,7 +174,7 @@ def read_ne(ne_file):
     return ne_list, ne_to_index
 
 def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
-                    word_to_index, pos_to_index,
+                    character_to_index, word_to_index, pos_to_index,
                     pos_count, ne_count, pos_ne_count):
     # if len(tree.subtrees) == 1:
         # return construct_node(node, tree.subtrees[0], ner_raw_data, head_raw_data, text_raw_data,
@@ -128,24 +193,14 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
     # if not word: node.pos_index = -1
     
     # Process word info
-    if word:
-        node.word_index = word_to_index[word]
-    else:
-        node.word_index = -1
-    
-    window = 0
-    node.window_index_list = [-1] * (2*window)
-    for i in range(window):
-        index = span[0]-1-i
-        if index < 0: break
-        node.window_index_list[window-1-i] = word_to_index[text_raw_data[index]]
-    for i in range(window):
-        index = span[1]+i
-        if index >= len(text_raw_data): break
-        node.window_index_list[window+i] = word_to_index[text_raw_data[index]]
+    node.word_split = [character_to_index[character] for character in word] if word else []
+    mapped_word, node.word_case = get_mapped_word(word)
+    node.word_index = word_to_index[mapped_word] if mapped_word else -1
     
     # Process head info
-    node.head_index = word_to_index[head]
+    node.head_split = [character_to_index[character] for character in head]
+    mapped_head, node.head_case = get_mapped_word(head)
+    node.head_index = word_to_index[mapped_head]
     
     # Process ne info
     node.ne = ne
@@ -156,22 +211,22 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
     node.span = span
     
     # Binarize children
-    # degree = len(tree.subtrees)
-    # if degree > 2:
-        # side_child_pos = tree.subtrees[-1].label
-        # side_child_span = tree.subtrees[-1].span
-        # side_child_head = head_raw_data[(side_child_span, side_child_pos)][1]
-        # if side_child_head != head:
-            # sub_subtrees = tree.subtrees[:-1]
-        # else:
-            # sub_subtrees = tree.subtrees[1:]
-        # new_span = (sub_subtrees[0].span[0], sub_subtrees[-1].span[1])
-        # new_tree = PSTree(label=pos, span=new_span, subtrees=sub_subtrees)
-        # new_tree.head = head
-        # if side_child_head != head:
-            # tree.subtrees = [new_tree, tree.subtrees[-1]]
-        # else:
-            # tree.subtrees = [tree.subtrees[0], new_tree]
+    degree = len(tree.subtrees)
+    if degree > 2:
+        side_child_pos = tree.subtrees[-1].label
+        side_child_span = tree.subtrees[-1].span
+        side_child_head = head_raw_data[(side_child_span, side_child_pos)][1]
+        if side_child_head != head:
+            sub_subtrees = tree.subtrees[:-1]
+        else:
+            sub_subtrees = tree.subtrees[1:]
+        new_span = (sub_subtrees[0].span[0], sub_subtrees[-1].span[1])
+        new_tree = PSTree(label=pos, span=new_span, subtrees=sub_subtrees)
+        new_tree.head = head
+        if side_child_head != head:
+            tree.subtrees = [new_tree, tree.subtrees[-1]]
+        else:
+            tree.subtrees = [tree.subtrees[0], new_tree]
             
     # Process children
     node.degree = len(tree.subtrees)
@@ -180,12 +235,12 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
         child = Node()
         node.add_child(child)
         child_degree = construct_node(child, subtree, ner_raw_data, head_raw_data, text_raw_data,
-                                        word_to_index, pos_to_index,
+                                        character_to_index, word_to_index, pos_to_index,
                                         pos_count, ne_count, pos_ne_count)
         max_degree = max(max_degree, child_degree)
     return max_degree
 
-def get_tree_data(raw_data, word_to_index, pos_to_index):
+def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index):
     log("get_tree_data()...")
     """ Get tree structured data from CoNLL 2012
     
@@ -211,7 +266,7 @@ def get_tree_data(raw_data, word_to_index, pos_to_index):
                 root_node = Node()
                 degree = construct_node(
                             root_node, parse, ner_raw_data[index], head_raw_data, text_raw_data,
-                            word_to_index, pos_to_index,
+                            character_to_index, word_to_index, pos_to_index,
                             pos_count, ne_count, pos_ne_count)
                 max_degree = max(max_degree, degree)
                 # root_node.text = raw_data[document][part]["text"][index]
@@ -230,7 +285,8 @@ def label_tree_data(node, pos_to_index, ne_to_index):
         label_tree_data(child, pos_to_index, ne_to_index)
     return
     
-def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
+def read_conll_dataset(raw_data_path = "../../CONLL2012-intern/conll-2012/v4/data",
+                       character_file = "character.txt",
                        vocabulary_file = "vocabulary.txt",
                        pos_file = "pos.txt",
                        ne_file = "ne.txt"):
@@ -242,6 +298,9 @@ def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
         full_path = os.path.join(raw_data_path, split, "data/english/annotations")
         config = {"file_suffix": "gold_conll", "dir_prefix": full_path}
         raw_data[split] = load_data(config)
+    
+    # Read character list
+    character_list, character_to_index = read_character(character_file)
     
     # Read word list
     word_list, word_to_index = read_vocabulary(vocabulary_file)
@@ -260,7 +319,7 @@ def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
     pos_ne_count = {}
     for split in data_split_list:
         tree_data, degree, pos_count[split], ne_count[split], pos_ne_count[split], ner_list = (
-            get_tree_data(raw_data[split], word_to_index, pos_to_index))
+            get_tree_data(raw_data[split], character_to_index, word_to_index, pos_to_index))
         sentences = len(tree_data)
         nodes = sum(pos_count[split].itervalues())
         nes = sum(pos_ne_count[split].itervalues())
@@ -319,7 +378,9 @@ def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
         for root_node in data[split][0]:
             label_tree_data(root_node, pos_to_index, ne_to_index)
     
-    return data, max_degree, word_to_index, len(ne_to_index), len(pos_to_index), ne_list
+    return (data, max_degree, word_to_index,
+            len(ne_to_index), len(pos_to_index), len(character_to_index),
+            ne_list)
     
 def get_formatted_input(root_node, degree):
     """ Get inputs with RNN required format
@@ -347,10 +408,18 @@ def get_formatted_input(root_node, degree):
     y2 = []
     T = []
     p = []
+    
     x1 = []
     x2 = []
-    chunk = []
+    x3 = []
+    s1 = []
+    s2 = []
+    s3 = []
+    cut1 = [(0,0)]
+    cut2 = [(0,0)]
+    cut3 = [(0,0)]
     
+    chunk = []
     S_tmp = []
     siblings = 1
     
@@ -359,13 +428,6 @@ def get_formatted_input(root_node, degree):
         for node in layer:
             index += 1
             node.index = index
-            
-            if node.parent:
-                node.parent_pos_index = node.parent.pos_index
-                node.parent_head_index = node.parent.head_index
-            else:
-                node.parent_pos_index = -1
-                node.parent_head_index = -1
                 
             y1.append(node.y1)
             y2.append(node.y2)
@@ -375,9 +437,19 @@ def get_formatted_input(root_node, degree):
             
             # p.append([node.pos_index, node.parent_pos_index])
             p.append([node.pos_index])
+            
             x1.append(node.word_index)
-            x2.append([node.head_index, node.parent_head_index] + node.window_index_list)
-            # x2.append([node.head_index] + node.window_index_list)
+            s1 += node.word_split
+            cut1.append((cut1[-1][0]+cut1[-1][1], len(node.word_split)))
+            
+            x2.append(node.head_index)
+            s2 += node.head_split
+            cut2.append((cut2[-1][0]+cut2[-1][1], len(node.head_split)))
+            
+            x3.append(node.parent.head_index)
+            s3 += node.parent.head_split
+            cut3.append((cut3[-1][0]+cut3[-1][1], len(node.parent.head_split)))
+            
             chunk.append(node.span)
             S_tmp.append([-1]*siblings + child_index_list + [-1]*siblings)
             
@@ -385,8 +457,16 @@ def get_formatted_input(root_node, degree):
     y2 = np.array(y2, dtype=np.int32)
     T = np.array(T, dtype=np.int32)
     p = np.array(p, dtype=np.int32)
+    
     x1 = np.array(x1, dtype=np.int32)
     x2 = np.array(x2, dtype=np.int32)
+    x3 = np.array(x3, dtype=np.int32)
+    s1 = np.array(s1, dtype=np.int32)
+    s2 = np.array(s2, dtype=np.int32)
+    s3 = np.array(s3, dtype=np.int32)
+    cut1 = np.array(cut1[1:], dtype=np.int32)
+    cut2 = np.array(cut2[1:], dtype=np.int32)
+    cut3 = np.array(cut3[1:], dtype=np.int32)
     
     S = np.ones((len(y1), 2*siblings+1), dtype=np.int32) * -1
     # S = np.ones((len(y1), 2*siblings+2), dtype=np.int32) * -1
@@ -396,7 +476,10 @@ def get_formatted_input(root_node, degree):
             # S[child_index_list[i],:-1] = child_index_list[i-siblings:i+siblings+1]
             # S[child_index_list[i], -1] = index
     S[-1,1] = len(y1) - 1
-    return y1, y2, T, p, x1, x2, S, chunk
+    
+    return (y1, y2, T, p, 
+            x1, x2, x3, s1, s2, s3, cut1, cut2, cut3,
+            S, chunk)
 
 def get_one_hot(a, dimension):
     samples = len(a)
@@ -406,9 +489,10 @@ def get_one_hot(a, dimension):
     return A
 
 if __name__ == "__main__":
-    # extract_glove_embeddings()
-    # extract_conll_vocabulary()
-    read_conll_dataset()
+    extract_conll_vocabulary()
+    # extract_collobert_embeddings()
+    extract_glove_embeddings()
+    # read_conll_dataset()
     exit()
     
     

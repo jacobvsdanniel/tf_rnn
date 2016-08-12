@@ -10,14 +10,11 @@ import tensorflow as tf
 import tf_rnn
 import conll_utils
 
-data_path = "../CONLL2012-intern/conll-2012/v4/data"
+data_path = "../../CONLL2012-intern/conll-2012/v4/data"
 data_split_list = ["train", "development", "test"]
 
-patience = 4
+patience = 3
 max_epoches = 30
-
-embedding_dimension = 300
-hidden_dimension = 300
 
 def read_glove_embedding(model, word_to_index):
     # Read glove embeddings
@@ -33,23 +30,37 @@ def read_glove_embedding(model, word_to_index):
     model.sess.run(model.L.assign(L))
     return
     
+def read_collobert_embedding(model, word_to_index):
+    # Read glove embeddings
+    word_array = np.load("collobert_word.npy")
+    embedding_array = np.load("collobert_embedding.npy")
+    collobert_to_index = {word: i for i, word in enumerate(word_array)}
+    
+    # Initialize word embeddings to glove
+    L = model.sess.run(model.L)
+    for word, index in word_to_index.iteritems():
+        if word in collobert_to_index:
+            L[index] = embedding_array[collobert_to_index[word]]
+    model.sess.run(model.L.assign(L))
+    return
+    
 def train():
     # Read data
-    data, degree, word_to_index, labels, poses, ne_list = (
+    data, degree, word_to_index, labels, poses, characters, ne_list = (
         conll_utils.read_conll_dataset(raw_data_path=data_path))
 
     # Initialize model
     config = tf_rnn.Config()
+    config.alphabet_size = characters
     config.pos_dimension = poses
-    config.embedding_dimension = embedding_dimension
     config.vocabulary_size = len(word_to_index)
-    config.hidden_dimension = hidden_dimension
     config.output_dimension = labels
     config.degree = degree
     model = tf_rnn.RNN(config)
     model.sess = tf.Session()
     model.sess.run(tf.initialize_all_variables())
     read_glove_embedding(model, word_to_index)
+    # read_collobert_embedding(model, word_to_index)
     
     # Train
     saver = tf.train.Saver()
@@ -122,15 +133,14 @@ def evaluate_confusion(model, data):
 
 def validate(split):
     # Read data
-    data, degree, word_to_index, labels, poses, ne_list = (
+    data, degree, word_to_index, labels, poses, characters, ne_list = (
         conll_utils.read_conll_dataset(raw_data_path=data_path))
 
     # Initialize model
     config = tf_rnn.Config()
+    config.alphabet_size = characters
     config.pos_dimension = poses
-    config.embedding_dimension = embedding_dimension
     config.vocabulary_size = len(word_to_index)
-    config.hidden_dimension = hidden_dimension
     config.output_dimension = labels
     config.degree = degree
     model = tf_rnn.RNN(config)
@@ -170,15 +180,14 @@ def validate(split):
 
 def interpolate_embedding():
     # Read data
-    data, degree, word_to_index, labels, poses, ne_list = (
+    data, degree, word_to_index, labels, poses, characters, ne_list = (
         conll_utils.read_conll_dataset(raw_data_path=data_path))
 
     # Initialize model
     config = tf_rnn.Config()
+    config.alphabet_size = characters
     config.pos_dimension = poses
-    config.embedding_dimension = embedding_dimension
     config.vocabulary_size = len(word_to_index)
-    config.hidden_dimension = hidden_dimension
     config.output_dimension = labels
     config.degree = degree
     model = tf_rnn.RNN(config)
