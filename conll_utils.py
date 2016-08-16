@@ -6,7 +6,7 @@ from collections import defaultdict
 
 import numpy as np
 
-sys.path.append("../../CONLL2012-intern")
+sys.path.append("../CONLL2012-intern")
 from load_conll import load_data
 from pstree import PSTree
 
@@ -87,7 +87,7 @@ def extract_glove_embeddings(glove_file = "../glove.840B.300d.txt",
     np.save("glove_embedding.npy", embedding_list)
     return
     
-def extract_conll_vocabulary(raw_data_path = "../../CONLL2012-intern/conll-2012/v4/data",
+def extract_conll_vocabulary(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
                              vocabulary_file = "vocabulary.txt",
                              character_file = "character.txt"):
     log("extract_conll_vocabulary()...")
@@ -285,7 +285,7 @@ def label_tree_data(node, pos_to_index, ne_to_index):
         label_tree_data(child, pos_to_index, ne_to_index)
     return
     
-def read_conll_dataset(raw_data_path = "../../CONLL2012-intern/conll-2012/v4/data",
+def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
                        character_file = "character.txt",
                        vocabulary_file = "vocabulary.txt",
                        pos_file = "pos.txt",
@@ -381,7 +381,12 @@ def read_conll_dataset(raw_data_path = "../../CONLL2012-intern/conll-2012/v4/dat
     return (data, max_degree, word_to_index,
             len(ne_to_index), len(pos_to_index), len(character_to_index),
             ne_list)
-    
+
+def get_padded_word(word, word_length=20):
+    word_cut = [-1] + word[:word_length-2] + [-2]
+    padding = [-3] * (word_length - len(word_cut))
+    return word_cut + padding
+
 def get_formatted_input(root_node, degree):
     """ Get inputs with RNN required format
     
@@ -412,12 +417,7 @@ def get_formatted_input(root_node, degree):
     x1 = []
     x2 = []
     x3 = []
-    s1 = []
-    s2 = []
-    s3 = []
-    cut1 = [(0,0)]
-    cut2 = [(0,0)]
-    cut3 = [(0,0)]
+    xx = []
     
     chunk = []
     S_tmp = []
@@ -439,16 +439,12 @@ def get_formatted_input(root_node, degree):
             p.append([node.pos_index])
             
             x1.append(node.word_index)
-            s1 += node.word_split
-            cut1.append((cut1[-1][0]+cut1[-1][1], len(node.word_split)))
-            
             x2.append(node.head_index)
-            s2 += node.head_split
-            cut2.append((cut2[-1][0]+cut2[-1][1], len(node.head_split)))
-            
             x3.append(node.parent.head_index)
-            s3 += node.parent.head_split
-            cut3.append((cut3[-1][0]+cut3[-1][1], len(node.parent.head_split)))
+            
+            xx.append(get_padded_word(node.word_split))
+            xx.append(get_padded_word(node.head_split))
+            xx.append(get_padded_word(node.parent.head_split))
             
             chunk.append(node.span)
             S_tmp.append([-1]*siblings + child_index_list + [-1]*siblings)
@@ -461,12 +457,7 @@ def get_formatted_input(root_node, degree):
     x1 = np.array(x1, dtype=np.int32)
     x2 = np.array(x2, dtype=np.int32)
     x3 = np.array(x3, dtype=np.int32)
-    s1 = np.array(s1, dtype=np.int32)
-    s2 = np.array(s2, dtype=np.int32)
-    s3 = np.array(s3, dtype=np.int32)
-    cut1 = np.array(cut1[1:], dtype=np.int32)
-    cut2 = np.array(cut2[1:], dtype=np.int32)
-    cut3 = np.array(cut3[1:], dtype=np.int32)
+    xx = np.array(xx, dtype=np.int32)
     
     S = np.ones((len(y1), 2*siblings+1), dtype=np.int32) * -1
     # S = np.ones((len(y1), 2*siblings+2), dtype=np.int32) * -1
@@ -478,7 +469,7 @@ def get_formatted_input(root_node, degree):
     S[-1,1] = len(y1) - 1
     
     return (y1, y2, T, p, 
-            x1, x2, x3, s1, s2, s3, cut1, cut2, cut3,
+            x1, x2, x3, xx,
             S, chunk)
 
 def get_one_hot(a, dimension):
@@ -489,10 +480,10 @@ def get_one_hot(a, dimension):
     return A
 
 if __name__ == "__main__":
-    extract_conll_vocabulary()
+    # extract_conll_vocabulary()
     # extract_collobert_embeddings()
-    extract_glove_embeddings()
-    # read_conll_dataset()
+    # extract_glove_embeddings()
+    read_conll_dataset()
     exit()
     
     

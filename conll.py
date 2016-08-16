@@ -10,10 +10,10 @@ import tensorflow as tf
 import tf_rnn
 import conll_utils
 
-data_path = "../../CONLL2012-intern/conll-2012/v4/data"
+data_path = "../CONLL2012-intern/conll-2012/v4/data"
 data_split_list = ["train", "development", "test"]
 
-patience = 3
+patience = 4
 max_epoches = 30
 
 def read_glove_embedding(model, word_to_index):
