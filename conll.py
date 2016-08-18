@@ -18,7 +18,7 @@ data_split_list = ["train", "development", "test"]
 batch_nodes = 1000
 batch_trees = 16
 patience = 6
-max_epoches = 150
+max_epoches = 60
 
 def read_glove_embedding(model, word_to_index):
     # Read glove embeddings
@@ -99,6 +99,7 @@ def make_tree_batch(tree_list):
     batch = []
     nodes = 0
     for tree in tree_list:
+        # if tree.nodes >= 100: continue
         if len(batch)>=batch_trees or nodes+tree.nodes>batch_nodes:
             batch_list.append(batch)
             batch = []
@@ -107,6 +108,7 @@ def make_tree_batch(tree_list):
         nodes += tree.nodes
     batch_list.append(batch)
     
+    # random.shuffle(batch_list)
     return batch_list
 
 def make_tree_ner_batch(tree_list, ner_list):
@@ -117,6 +119,7 @@ def make_tree_ner_batch(tree_list, ner_list):
     batch = []
     nodes = 0
     for tree, ner in data:
+        # if tree.nodes >= 100: continue
         if len(batch)>=batch_trees or nodes+tree.nodes>batch_nodes:
             batch_list.append(batch)
             batch = []
@@ -132,7 +135,7 @@ def train_dataset(model, data):
     batch_list = make_tree_batch(tree_list)
     print "batches:", len(batch_list)
     
-    total_trees = len(tree_list)
+    total_trees = sum(len(batch) for batch in batch_list)
     trees = 0
     total_loss = 0.
     for i, batch in enumerate(batch_list):
@@ -158,6 +161,9 @@ def evaluate_dataset(model, data, ne_list):
         total_true_postives += true_postives
         total_postives += postives
         total_reals += reals
+    print "true_postives", total_true_postives
+    print "positives", total_postives
+    print "reals", total_reals
     
     try:
         precision = total_true_postives / total_postives

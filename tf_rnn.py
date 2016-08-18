@@ -27,7 +27,7 @@ class Config(object):
         self.degree = 2
         self.node_features = 3
         
-        self.learning_rate = 1e-5
+        self.learning_rate = 1e-4
         self.epsilon = 1e-4
         return
         
@@ -88,16 +88,17 @@ class RNN(object):
         self.nodes = tf.shape(self.x1)[1]
         return
     
-    def create_word_unit(self):
+    def create_word_cnn_unit(self):
         self.K = [None]
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
             for window in xrange(1, self.max_conv_window+1):
                 self.K.append(tf.get_variable("K%d" % window,
                                 [window, self.character_dimension, 1, self.kernels*window]))
         
-        def word_unit(xx):
+        def word_cnn_unit(xx):
             XX = tf.gather(self.C_hat, xx+3)
-            XX = tf.reshape(XX, [-1, self.word_length, self.character_dimension, 1])
+            XX = tf.reshape(XX, [self.samples * self.nodes * 3,
+                                 self.word_length, self.character_dimension, 1])
             stride = [1, 1, self.character_dimension, 1]
             
             XX_hat = []
@@ -109,12 +110,46 @@ class RNN(object):
             XX_hat = tf.concat(1, XX_hat)
             return tf.tanh(XX_hat)
         
-        self.f_xx = word_unit
+        self.f_x_cnn = word_cnn_unit
+        return
+        
+    def create_word_highway_unit(self):
+        layers = 1
+        self.W_x_mlp = []
+        self.W_x_gate = []
+        self.b_x_mlp = []
+        self.b_x_gate = []
+        for layer in range(layers):
+            with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
+                self.W_x_mlp.append(tf.get_variable("W_x_mlp_%d" % layer,
+                                            [self.embedding_dimension_2,
+                                             self.embedding_dimension_2]))
+                self.W_x_gate.append(tf.get_variable("W_x_gate_%d" % layer,
+                                            [self.embedding_dimension_2,
+                                             self.embedding_dimension_2]))
+                self.b_x_mlp.append(tf.get_variable("b_x_mlp_%d" % layer,
+                                            [1, self.embedding_dimension_2]))
+            with tf.variable_scope("RNN",
+                        initializer=tf.random_normal_initializer(mean=-2, stddev=0.1)):
+                self.b_x_gate.append(tf.get_variable("b_x_gate_%d" % layer,
+                                            [1, self.embedding_dimension_2]))
+                
+        def word_highway_unit(xx):
+            data = xx
+            for layer in range(layers):
+                mlp = tf.tanh(tf.matmul(data, self.W_x_mlp[layer]) + self.b_x_mlp[layer])
+                gate = tf.sigmoid(tf.matmul(data, self.W_x_gate[layer]) + self.b_x_gate[layer])
+                data = mlp*gate + data*(1-gate)
+            return data
+        self.f_x_highway = word_highway_unit
         return
         
     def create_character_embedding_layer(self):
-        self.create_word_unit()
-        XX = self.f_xx(self.xx)
+        self.create_word_cnn_unit()
+        self.create_word_highway_unit()
+        
+        xx = tf.reshape(self.xx, [self.samples*self.nodes*3, self.word_length])
+        XX = self.f_x_highway(self.f_x_cnn(xx))
         self.XX = tf.reshape(XX, [self.samples, self.nodes*3, self.embedding_dimension_2])
         
     def create_hidden_unit(self):
@@ -122,7 +157,7 @@ class RNN(object):
             self.W_h = tf.get_variable("W_h",
                                        [self.pos_dimension
                                         + self.embedding_dimension * 3
-                                        + self.embedding_dimension_2 * 0
+                                        + self.embedding_dimension_2 * 3
                                         + self.hidden_dimension,
                                         self.hidden_dimension])
             self.b_h = tf.get_variable('b_h', [1, self.hidden_dimension])
@@ -130,6 +165,7 @@ class RNN(object):
         def hidden_unit(x):
             h = tf.matmul(x, self.W_h) + self.b_h
             return tf.tanh(h)
+            # return tf.nn.elu(h)
         
         self.f_h = hidden_unit
         return
@@ -171,8 +207,8 @@ class RNN(object):
             C = tf.gather(H_hat, t)
             c = tf.reduce_sum(C, reduction_indices=1)
             
-            # h = self.f_h(tf.concat(1, [p, x1, x2, x3, xx, c]))
-            h = self.f_h(tf.concat(1, [p, x1, x2, x3, c]))
+            h = self.f_h(tf.concat(1, [p, x1, x2, x3, xx, c]))
+            # h = self.f_h(tf.concat(1, [p, x1, x2, x3, c]))
             H_upper = tf.zeros([self.samples, index, self.hidden_dimension])
             H_h = tf.reshape(h, [self.samples, 1, self.hidden_dimension])
             H_lower = tf.zeros([self.samples, self.nodes-1-index, self.hidden_dimension])
