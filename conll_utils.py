@@ -231,14 +231,18 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
     # Process children
     node.degree = len(tree.subtrees)
     max_degree = node.degree
+    nodes = 1
     for subtree in tree.subtrees:
         child = Node()
         node.add_child(child)
-        child_degree = construct_node(child, subtree, ner_raw_data, head_raw_data, text_raw_data,
-                                        character_to_index, word_to_index, pos_to_index,
-                                        pos_count, ne_count, pos_ne_count)
+        (child_degree, child_nodes
+            ) = construct_node(child, subtree, ner_raw_data, head_raw_data, text_raw_data,
+                                character_to_index, word_to_index, pos_to_index,
+                                pos_count, ne_count, pos_ne_count)
         max_degree = max(max_degree, child_degree)
-    return max_degree
+        nodes += child_nodes
+        
+    return max_degree, nodes
 
 def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index):
     log("get_tree_data()...")
@@ -264,11 +268,13 @@ def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index):
                 text_raw_data = raw_data[document][part]["text"][index]
                 
                 root_node = Node()
-                degree = construct_node(
+                (degree, nodes
+                    ) = construct_node(
                             root_node, parse, ner_raw_data[index], head_raw_data, text_raw_data,
                             character_to_index, word_to_index, pos_to_index,
                             pos_count, ne_count, pos_ne_count)
                 max_degree = max(max_degree, degree)
+                root_node.nodes = nodes
                 # root_node.text = raw_data[document][part]["text"][index]
                                         
                 root_list.append(root_node)
@@ -279,7 +285,6 @@ def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index):
 
 def label_tree_data(node, pos_to_index, ne_to_index):
     node.y1 = ne_to_index[node.ne]
-    node.y2 = pos_to_index[node.pos]
         
     for child in node.child_list:
         label_tree_data(child, pos_to_index, ne_to_index)
@@ -382,16 +387,15 @@ def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
             len(ne_to_index), len(pos_to_index), len(character_to_index),
             ne_list)
 
-def get_padded_word(word, word_length=20):
+def get_padded_word(word, word_length):
     word_cut = [-1] + word[:word_length-2] + [-2]
     padding = [-3] * (word_length - len(word_cut))
     return word_cut + padding
 
-def get_formatted_input(root_node, degree):
+def get_formatted_input(root_node, degree, word_length):
     """ Get inputs with RNN required format
     
     y1: vector; ne labels of nodes
-    y2: vector; pos labels of nodes
     T: matrix; the tree structure
     p: vector; pos indices of nodes
     x1: vector; word indices of nodes
@@ -410,7 +414,6 @@ def get_formatted_input(root_node, degree):
     
     # Extract data from layers bottom-up
     y1 = []
-    y2 = []
     T = []
     p = []
     
@@ -430,27 +433,24 @@ def get_formatted_input(root_node, degree):
             node.index = index
                 
             y1.append(node.y1)
-            y2.append(node.y2)
             
             child_index_list = [child.index for child in node.child_list]
             T.append(child_index_list + [-1]*(degree-len(node.child_list)))
             
-            # p.append([node.pos_index, node.parent_pos_index])
-            p.append([node.pos_index])
+            p.append(node.pos_index)
             
             x1.append(node.word_index)
             x2.append(node.head_index)
             x3.append(node.parent.head_index)
             
-            xx.append(get_padded_word(node.word_split))
-            xx.append(get_padded_word(node.head_split))
-            xx.append(get_padded_word(node.parent.head_split))
+            xx.append(get_padded_word(node.word_split, word_length))
+            xx.append(get_padded_word(node.head_split, word_length))
+            xx.append(get_padded_word(node.parent.head_split, word_length))
             
             chunk.append(node.span)
             S_tmp.append([-1]*siblings + child_index_list + [-1]*siblings)
             
     y1 = np.array(y1, dtype=np.int32)
-    y2 = np.array(y2, dtype=np.int32)
     T = np.array(T, dtype=np.int32)
     p = np.array(p, dtype=np.int32)
     
@@ -468,10 +468,44 @@ def get_formatted_input(root_node, degree):
             # S[child_index_list[i], -1] = index
     S[-1,1] = len(y1) - 1
     
-    return (y1, y2, T, p, 
+    return (y1, T, p, 
             x1, x2, x3, xx,
             S, chunk)
-
+            
+def get_batch_input(root_list, degree, word_length=20):
+    input_list = []
+    for root_node in root_list:
+        # y1, T, p, x1, x2, x3, xx, S, chunk = get_formatted_input(root_node, degree)
+        input_list.append(get_formatted_input(root_node, degree, word_length))
+    
+    samples = len(input_list)
+    nodes = max([inp[1].shape[0] for inp in input_list])
+    
+    y1 = -1 * np.ones([samples, nodes], dtype=np.int32)
+    T = -1 * np.ones([samples, nodes, degree], dtype=np.int32)
+    p = -1 * np.ones([samples, nodes], dtype=np.int32)
+    x1 = -1 * np.ones([samples, nodes], dtype=np.int32)
+    x2 = -1 * np.ones([samples, nodes], dtype=np.int32)
+    x3 = -1 * np.ones([samples, nodes], dtype=np.int32)
+    xx = -3 * np.ones([samples, nodes*3, word_length], dtype=np.int32)
+    S = -1 * np.ones([samples, nodes, 3], dtype=np.int32)
+    chunk = []
+    
+    for i, inp in enumerate(input_list):
+        y1[i, :inp[0].shape[0]] = inp[0]
+        T[i, :inp[1].shape[0], :] = inp[1]
+        p[i, :inp[2].shape[0]] = inp[2]
+        x1[i, :inp[3].shape[0]] = inp[3]
+        x2[i, :inp[4].shape[0]] = inp[4]
+        x3[i, :inp[5].shape[0]] = inp[5]
+        xx[i, :inp[6].shape[0], :] = inp[6]
+        S[i, :inp[7].shape[0], :] = inp[7]
+        chunk.append(inp[8])
+    
+    return (y1, T, p, 
+            x1, x2, x3, xx,
+            S, chunk)
+    
 def get_one_hot(a, dimension):
     samples = len(a)
     A = np.zeros((samples, dimension), dtype=np.float32)

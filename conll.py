@@ -1,8 +1,10 @@
 import os
 import sys
 import time
+import math
 import random
 import argparse
+from collections import defaultdict
 
 import numpy as np
 import tensorflow as tf
@@ -13,8 +15,10 @@ import conll_utils
 data_path = "../CONLL2012-intern/conll-2012/v4/data"
 data_split_list = ["train", "development", "test"]
 
-patience = 4
-max_epoches = 30
+batch_nodes = 1000
+batch_trees = 16
+patience = 6
+max_epoches = 150
 
 def read_glove_embedding(model, word_to_index):
     # Read glove embeddings
@@ -65,8 +69,8 @@ def train():
     # Train
     saver = tf.train.Saver()
     best_score = (-1, -1, -1)
-    best_epoch = -1
-    for epoch in xrange(max_epoches):
+    best_epoch = 0
+    for epoch in xrange(1, max_epoches+1):
         print "\n<Epoch %d>" % epoch
         
         start_time = time.time()
@@ -87,29 +91,70 @@ def train():
     saver.restore(model.sess, "tmp.model")
     score = evaluate_dataset(model, data["test"], ne_list)
     print "[test] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score
+   
+def make_tree_batch(tree_list):
+    tree_list = sorted(tree_list, key=lambda tree: tree.nodes)
+    
+    batch_list = []
+    batch = []
+    nodes = 0
+    for tree in tree_list:
+        if len(batch)>=batch_trees or nodes+tree.nodes>batch_nodes:
+            batch_list.append(batch)
+            batch = []
+            nodes = 0
+        batch.append(tree)
+        nodes += tree.nodes
+    batch_list.append(batch)
+    
+    return batch_list
 
+def make_tree_ner_batch(tree_list, ner_list):
+    data = zip(tree_list, ner_list)
+    data = sorted(data, key=lambda x: x[0].nodes)
+    
+    batch_list = []
+    batch = []
+    nodes = 0
+    for tree, ner in data:
+        if len(batch)>=batch_trees or nodes+tree.nodes>batch_nodes:
+            batch_list.append(batch)
+            batch = []
+            nodes = 0
+        batch.append((tree, ner))
+        nodes += tree.nodes
+    batch_list.append(batch)
+    
+    return batch_list
+    
 def train_dataset(model, data):
-    tree_list, nodes, nes, ner_list = data
-    total_data = len(tree_list)
+    tree_list, _, _, _ = data
+    batch_list = make_tree_batch(tree_list)
+    print "batches:", len(batch_list)
+    
+    total_trees = len(tree_list)
+    trees = 0
     total_loss = 0.
-    #for i, tree in enumerate(tree_list):
-    for i in range(total_data):
-        tree = tree_list[random.randint(0,total_data-1)]
-        loss = model.train(tree)
+    for i, batch in enumerate(batch_list):
+        loss = model.train(batch)
         total_loss += loss
-        index = i + 1
-        sys.stdout.write("\r(%5d/%5d) average loss %.3f" % (index, total_data, total_loss/index))
+        
+        trees += len(batch)
+        sys.stdout.write("\r(%5d/%5d) average loss %.3f" % (trees, total_trees, total_loss/trees))
     sys.stdout.write("\r" + " "*64 + "\r")
-    return total_loss / total_data
+    return total_loss / total_trees
 
 def evaluate_dataset(model, data, ne_list):
-    tree_list, nodes, nes, ner_list = data
+    tree_list, _, _, ner_list = data
+    batch_list = make_tree_ner_batch(tree_list, ner_list)
+    print "batches:", len(batch_list)
     
     total_true_postives = 0.
     total_postives = 0.
     total_reals = 0.
-    for index, tree in enumerate(tree_list):
-        true_postives, postives, reals = model.evaluate(tree, ner_list[index], ne_list)
+    for batch in batch_list:
+        tree_list, ner_list = zip(*batch)
+        true_postives, postives, reals = model.evaluate(tree_list, ner_list, ne_list)
         total_true_postives += true_postives
         total_postives += postives
         total_reals += reals
@@ -150,17 +195,19 @@ def validate(split):
     saver = tf.train.Saver()
     
     # TMP
-    # for path in ["tmp.model", "tmp2.model"]:
-        # print "\n<%s>" % path
-        # for split in ["development", "test"]:
-            # saver.restore(model.sess, path)
-            # score = evaluate_dataset(model, data[split])
-            # print "[%s]" % split + " precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score
+    # for split in ["train", "development", "test"]:
+        # saver.restore(model.sess, "tmp.model")
+        # score = evaluate_dataset(model, data[split], ne_list)
+        # print "[%s]" % split + " precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score
+    # for i, j in tmp_dict.iteritems():
+        # print i, j
+    # print len(tmp_dict)
     # return
     
     saver.restore(model.sess, "tmp.model")
     score = evaluate_dataset(model, data[split], ne_list)
     print "[%s]" % split + " precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score
+    return
     confusion_matrix = evaluate_confusion(model, data[split])
     
     ne_list.append("NONE")
