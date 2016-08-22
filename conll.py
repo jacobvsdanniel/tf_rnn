@@ -17,8 +17,8 @@ data_split_list = ["train", "development", "test"]
 
 batch_nodes = 1000
 batch_trees = 16
-patience = 6
-max_epoches = 60
+patience = 5
+max_epoches = 30
 
 def read_glove_embedding(model, word_to_index):
     # Read glove embeddings
@@ -31,6 +31,11 @@ def read_glove_embedding(model, word_to_index):
     for word, index in word_to_index.iteritems():
         if word in glove_word_to_index:
             L[index] = glove_embedding_array[glove_word_to_index[word]]
+            
+    # Normalize word embeddings
+    # for i in range(L.shape[0]):
+        # L[i] = L[i] / np.linalg.norm(L[i]) * 5
+            
     model.sess.run(model.L.assign(L))
     return
     
@@ -56,7 +61,7 @@ def train():
     # Initialize model
     config = tf_rnn.Config()
     config.alphabet_size = characters
-    config.pos_dimension = poses
+    config.pos_tags = poses
     config.vocabulary_size = len(word_to_index)
     config.output_dimension = labels
     config.degree = degree
@@ -81,6 +86,7 @@ def train():
         print "[validation] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score
         
         if best_score[2] < score[2]:
+            print "  best ever"
             best_score = score
             best_epoch = epoch
             saver.save(model.sess, "tmp.model")
@@ -133,7 +139,7 @@ def make_tree_ner_batch(tree_list, ner_list):
 def train_dataset(model, data):
     tree_list, _, _, _ = data
     batch_list = make_tree_batch(tree_list)
-    print "batches:", len(batch_list)
+    # print "batches:", len(batch_list)
     
     total_trees = sum(len(batch) for batch in batch_list)
     trees = 0
@@ -150,7 +156,7 @@ def train_dataset(model, data):
 def evaluate_dataset(model, data, ne_list):
     tree_list, _, _, ner_list = data
     batch_list = make_tree_ner_batch(tree_list, ner_list)
-    print "batches:", len(batch_list)
+    # print "batches:", len(batch_list)
     
     total_true_postives = 0.
     total_postives = 0.
@@ -161,9 +167,9 @@ def evaluate_dataset(model, data, ne_list):
         total_true_postives += true_postives
         total_postives += postives
         total_reals += reals
-    print "true_postives", total_true_postives
-    print "positives", total_postives
-    print "reals", total_reals
+    # print "true_postives", total_true_postives
+    # print "positives", total_postives
+    # print "reals", total_reals
     
     try:
         precision = total_true_postives / total_postives
@@ -190,7 +196,7 @@ def validate(split):
     # Initialize model
     config = tf_rnn.Config()
     config.alphabet_size = characters
-    config.pos_dimension = poses
+    config.pos_tags = poses
     config.vocabulary_size = len(word_to_index)
     config.output_dimension = labels
     config.degree = degree
@@ -239,7 +245,7 @@ def interpolate_embedding():
     # Initialize model
     config = tf_rnn.Config()
     config.alphabet_size = characters
-    config.pos_dimension = poses
+    config.pos_tags = poses
     config.vocabulary_size = len(word_to_index)
     config.output_dimension = labels
     config.degree = degree

@@ -15,18 +15,22 @@ class Config(object):
         self.alphabet_size = 5
         self.character_embeddings = 25
         self.word_length = 20
-        self.max_conv_window = 5
+        self.max_conv_window = 3
         self.kernels = 40
         self.character_to_word_embeddings = sum(xrange(1, self.max_conv_window+1)) * self.kernels
         
-        self.pos_dimension = 5
-        # self.word_dimension = self.word_to_word_embeddings + self.character_to_word_embeddings
-        self.word_dimension = self.word_to_word_embeddings
+        self.pos_tags = 79
+        self.pos_embeddings = 20
+        
+        self.pos_dimension = self.pos_tags
+        # self.pos_dimension = self.pos_embeddings
+        self.word_dimension = self.word_to_word_embeddings + self.character_to_word_embeddings
+        # self.word_dimension = self.word_to_word_embeddings
         self.hidden_dimension = 300
         self.output_dimension = 2
         
         self.degree = 2
-        self.neighbors = 3
+        self.neighbors = 4
         self.words = 3
         
         self.learning_rate = 1e-4
@@ -75,35 +79,45 @@ class RNN(object):
         with tf.variable_scope("RNN", initializer=tf.random_normal_initializer(stddev=0.1)):
             self.L = tf.get_variable("L",
                 [self.vocabulary_size, self.word_to_word_embeddings])
-            self.C = tf.get_variable("C",
-                [2+self.alphabet_size, self.character_embeddings])
+            # self.C = tf.get_variable("C",
+                # [2+self.alphabet_size, self.character_embeddings])
+            # self.Q = tf.get_variable("Q",
+                # [self.pos_tags, self.pos_embeddings])
+            # self.Q = tf.get_variable("Q",
+                # initializer=tf.constant(6.6*np.identity(self.pos_tags, dtype=np.float32)))
         self.L_hat = tf.concat(0, [tf.zeros([1, self.word_to_word_embeddings]), self.L])
-        self.C_hat = tf.concat(0, [tf.zeros([1, self.character_embeddings]), self.C])
+        # self.C_hat = tf.concat(0, [tf.zeros([1, self.character_embeddings]), self.C])
+        # self.Q_hat = tf.concat(0, [tf.zeros([1, self.pos_embeddings]), self.Q])
         
         # Compute indices of children and neighbors
         index_offset = tf.reshape(tf.range(self.samples), [1, self.samples, 1])
         T_offset = tf.tile(index_offset, [self.nodes, 1, self.degree])
         self.T_hat = T_offset + (1+self.T) * self.samples
-        S_offset = tf.tile(index_offset, [self.nodes, 1, self.neighbors])
-        self.S_hat = S_offset + (1+self.S) * self.samples
+        S_offset = tf.tile(index_offset, [self.nodes, 1, self.neighbors-1])
+        self.S_hat = S_offset + (1+self.S[:,:,:self.neighbors-1]) * self.samples
+        S_offset2 = tf.tile(index_offset, [self.nodes, 1, self.neighbors])
+        self.S_hat2 = S_offset2 + (1+self.S) * self.samples
         
         # Compute pos features
         p = tf.concat(0, [-1*tf.ones([1,self.samples], dtype=tf.int32), self.p])
         p = tf.reshape(p, [(1+self.nodes) * self.samples])
-        P = tf.one_hot(p, self.pos_dimension, on_value=5.)
-        P = tf.gather(P, self.S_hat)
+        P = tf.one_hot(p, self.pos_tags, on_value=10.)
+        # P = tf.gather(self.Q_hat, p+1)
+        P = tf.gather(P, self.S_hat2)
         self.P = tf.reshape(P, [self.nodes, self.samples, self.neighbors*self.pos_dimension])
         return
     
     def create_character_ngram_unit(self):
         self.K = [None]
+        self.character_embeddings = self.alphabet_size
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
             for window in xrange(1, self.max_conv_window+1):
                 self.K.append(tf.get_variable("K%d" % window,
                                 [window, self.character_embeddings, 1, self.kernels*window]))
         
         def character_ngram_unit(w):
-            W = tf.gather(self.C_hat, w+3)
+            W = tf.one_hot(w+2, self.alphabet_size, on_value=1.)
+            # W = tf.gather(self.C_hat, w+3)
             W = tf.reshape(W, [-1, self.word_length, self.character_embeddings, 1])
             stride = [1, 1, self.character_embeddings, 1]
             
@@ -114,13 +128,13 @@ class RNN(object):
                 W_hat.append(W_window)
             
             W_hat = tf.concat(1, W_hat)
-            return tf.tanh(W_hat)
+            return tf.nn.relu(W_hat)
         
         self.f_x_cnn = character_ngram_unit
         return
         
     def create_word_highway_unit(self):
-        layers = 1
+        layers = 0
         self.W_x_mlp = []
         self.W_x_gate = []
         self.b_x_mlp = []
@@ -128,48 +142,47 @@ class RNN(object):
         for layer in range(layers):
             with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
                 self.W_x_mlp.append(tf.get_variable("W_x_mlp_%d" % layer,
-                                            [self.word_dimension,
-                                             self.word_dimension]))
+                                            [self.character_to_word_embeddings,
+                                             self.character_to_word_embeddings]))
                 self.W_x_gate.append(tf.get_variable("W_x_gate_%d" % layer,
-                                            [self.word_dimension,
-                                             self.word_dimension]))
+                                            [self.character_to_word_embeddings,
+                                             self.character_to_word_embeddings]))
                 self.b_x_mlp.append(tf.get_variable("b_x_mlp_%d" % layer,
-                                            [1, self.word_dimension]))
+                                            [1, self.character_to_word_embeddings]))
             with tf.variable_scope("RNN",
                         initializer=tf.random_normal_initializer(mean=-2, stddev=0.1)):
                 self.b_x_gate.append(tf.get_variable("b_x_gate_%d" % layer,
-                                            [1, self.word_dimension]))
+                                            [1, self.character_to_word_embeddings]))
                 
         def word_highway_unit(x):
             data = x
             for layer in range(layers):
-                mlp = tf.tanh(tf.matmul(data, self.W_x_mlp[layer]) + self.b_x_mlp[layer])
+                mlp = tf.nn.relu(tf.matmul(data, self.W_x_mlp[layer]) + self.b_x_mlp[layer])
                 gate = tf.sigmoid(tf.matmul(data, self.W_x_gate[layer]) + self.b_x_gate[layer])
                 data = mlp*gate + data*(1-gate)
             return data
         self.f_x_highway = word_highway_unit
         return
-        
+    
     def create_word_embedding_layer(self):
         self.create_character_ngram_unit()
         self.create_word_highway_unit()
         
         w = tf.reshape(self.w, [self.nodes*self.samples*self.words, self.word_length])
-        W = self.f_x_cnn(w)
+        W = self.f_x_highway(self.f_x_cnn(w))
         
+        # X = tf.gather(tf.nn.l2_normalize(self.L_hat, 1)*5, self.x+1)
         X = tf.gather(self.L_hat, self.x+1)
         X = tf.reshape(X, [self.nodes*self.samples*self.words, self.word_to_word_embeddings])
-        
-        # X = tf.concat(1, [X, W])
-        # X = self.f_x_highway(X)
+        X = tf.concat(1, [X, W])
         self.X = tf.reshape(X, [self.nodes, self.samples, self.words*self.word_dimension])
         return
     
     def create_hidden_unit(self):
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
             self.W_h = tf.get_variable("W_h",
-                                         [self.neighbors * self.pos_dimension
-                                          + self.words * self.word_dimension
+                                         [self.pos_dimension * self.neighbors
+                                          + self.word_dimension * self.words
                                           + self.hidden_dimension,
                                           self.hidden_dimension])
             self.b_h = tf.get_variable('b_h', [1, self.hidden_dimension])
@@ -215,14 +228,14 @@ class RNN(object):
     def create_output_unit(self):
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
             self.W_o = tf.get_variable("W_o",
-                            [self.neighbors * self.hidden_dimension,
+                            [self.hidden_dimension * (self.neighbors-1),
                              self.output_dimension])
             self.b_o = tf.get_variable('b_o', [1, self.output_dimension])
             
         def output_unit(H):
             H_hat = tf.gather(H, self.S_hat)
             H_hat = tf.reshape(H_hat, [self.nodes * self.samples,
-                                       self.neighbors * self.hidden_dimension])
+                                       (self.neighbors-1) * self.hidden_dimension])
             O = tf.matmul(H_hat, self.W_o) + self.b_o
             return O
         

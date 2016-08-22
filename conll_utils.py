@@ -453,13 +453,13 @@ def get_formatted_input(root_node, degree, word_length):
     x = np.array(x, dtype=np.int32)
     w = np.array(w, dtype=np.int32)
     
-    S = np.ones((len(y), 2*siblings+1), dtype=np.int32) * -1
-    # S = np.ones((len(y), 2*siblings+2), dtype=np.int32) * -1
+    # S = np.ones((len(y), 2*siblings+1), dtype=np.int32) * -1
+    S = np.ones((len(y), 2*siblings+2), dtype=np.int32) * -1
     for index, child_index_list in enumerate(S_tmp):
         for i in range(siblings, len(child_index_list)-siblings):
-            S[child_index_list[i]] = child_index_list[i-siblings:i+siblings+1]
-            # S[child_index_list[i],:-1] = child_index_list[i-siblings:i+siblings+1]
-            # S[child_index_list[i], -1] = index
+            # S[child_index_list[i]] = child_index_list[i-siblings:i+siblings+1]
+            S[child_index_list[i],:-1] = child_index_list[i-siblings:i+siblings+1]
+            S[child_index_list[i], -1] = index
     S[-1,1] = len(y) - 1
     
     return y, T, p, x, w, S, chunk
@@ -472,7 +472,7 @@ def get_batch_input(root_list, degree, word_length=20):
     samples = len(input_list)
     nodes = max([i[1].shape[0] for i in input_list])
     words = 3
-    neighbors = 3
+    neighbors = 4
     
     y = -1 * np.ones([nodes, samples                    ], dtype=np.int32)
     T = -1 * np.ones([nodes, samples, degree            ], dtype=np.int32)
