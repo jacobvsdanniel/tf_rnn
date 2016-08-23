@@ -22,8 +22,8 @@ max_epoches = 30
 
 def read_glove_embedding(model, word_to_index):
     # Read glove embeddings
-    glove_word_array = np.load("glove_word.npy")
-    glove_embedding_array = np.load("glove_embedding.npy")
+    glove_word_array = np.load("../tf_rnn/glove_word.npy")
+    glove_embedding_array = np.load("../tf_rnn/glove_embedding.npy")
     glove_word_to_index = {word: i for i, word in enumerate(glove_word_array)}
     
     # Initialize word embeddings to glove
@@ -55,13 +55,13 @@ def read_collobert_embedding(model, word_to_index):
     
 def train():
     # Read data
-    data, degree, word_to_index, labels, poses, characters, ne_list = (
+    data, degree, word_to_index, labels, pos_dimension, characters, ne_list = (
         conll_utils.read_conll_dataset(raw_data_path=data_path))
 
     # Initialize model
     config = tf_rnn.Config()
     config.alphabet_size = characters
-    config.pos_tags = poses
+    config.pos_dimension = pos_dimension
     config.vocabulary_size = len(word_to_index)
     config.output_dimension = labels
     config.degree = degree
@@ -190,13 +190,13 @@ def evaluate_confusion(model, data):
 
 def validate(split):
     # Read data
-    data, degree, word_to_index, labels, poses, characters, ne_list = (
+    data, degree, word_to_index, labels, pos_dimension, characters, ne_list = (
         conll_utils.read_conll_dataset(raw_data_path=data_path))
 
     # Initialize model
     config = tf_rnn.Config()
     config.alphabet_size = characters
-    config.pos_tags = poses
+    config.pos_dimension = pos_dimension
     config.vocabulary_size = len(word_to_index)
     config.output_dimension = labels
     config.degree = degree
@@ -239,13 +239,13 @@ def validate(split):
 
 def interpolate_embedding():
     # Read data
-    data, degree, word_to_index, labels, poses, characters, ne_list = (
+    data, degree, word_to_index, labels, pos_dimension, characters, ne_list = (
         conll_utils.read_conll_dataset(raw_data_path=data_path))
 
     # Initialize model
     config = tf_rnn.Config()
     config.alphabet_size = characters
-    config.pos_tags = poses
+    config.pos_dimension = pos_dimension
     config.vocabulary_size = len(word_to_index)
     config.output_dimension = labels
     config.degree = degree

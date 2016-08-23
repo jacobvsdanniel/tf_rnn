@@ -14,8 +14,14 @@ class Node(object):
     def __init__(self):
         self.parent = self
         self.child_list = []
+        self.left = None
+        self.right = None
         
     def add_child(self, child):
+        if self.child_list:
+            sibling = self.child_list[-1]
+            sibling.right = child
+            child.left = sibling
         self.child_list.append(child)
         child.parent = self
 
@@ -275,7 +281,6 @@ def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index):
                             pos_count, ne_count, pos_ne_count)
                 max_degree = max(max_degree, degree)
                 root_node.nodes = nodes
-                # root_node.text = raw_data[document][part]["text"][index]
                                         
                 root_list.append(root_node)
                 ner_list.append(ner_raw_data[index])
@@ -394,13 +399,6 @@ def get_padded_word(word, word_length):
 
 def get_formatted_input(root_node, degree, word_length):
     """ Get inputs with RNN required format
-    
-    y1: vector; ne labels of nodes
-    T: matrix; the tree structure
-    p: vector; pos indices of nodes
-    x1: vector; word indices of nodes
-    x2: matrix; head word indices + parent head word indices + neighbor word indices
-    S: matrix; [sibling]*siblings + [self] + [sibling]*siblings indices of nodes
     """
     # Get BFS layers
     layer_list = []
@@ -412,56 +410,56 @@ def get_formatted_input(root_node, degree, word_length):
             child_layer.extend(node.child_list)
         layer = child_layer
     
-    # Extract data from layers bottom-up
-    y = []
-    T = []
-    
-    p = []
-    x = []
-    w = []
-    
-    chunk = []
-    S_tmp = []
-    siblings = 1
-    
+    # Index nodes bottom-up
     index = -1
     for layer in reversed(layer_list):
         for node in layer:
             index += 1
             node.index = index
-                
+    
+    # Extract data from layers bottom-up
+    y = []
+    T = []
+    p = []
+    x = []
+    w = []
+    S = []
+    chunk = []
+    for layer in reversed(layer_list):
+        for node in layer:
             y.append(node.y)
             
             child_index_list = [child.index for child in node.child_list]
             T.append(child_index_list + [-1]*(degree-len(node.child_list)))
             
-            p.append(node.pos_index)
+            p.append([node.pos_index,
+                      node.parent.pos_index,
+                      node.left.pos_index if node.left else -1,
+                      node.right.pos_index if node.right else -1])
+            
             x.append([node.word_index,
                       node.head_index,
-                      node.parent.head_index])
+                      node.parent.head_index,
+                      node.left.head_index if node.left else -1,
+                      node.right.head_index if node.right else -1])
+            
             w.append([get_padded_word(node.word_split, word_length),
                       get_padded_word(node.head_split, word_length),
-                      get_padded_word(node.parent.head_split, word_length)])
+                      get_padded_word(node.parent.head_split, word_length),
+                      get_padded_word(node.left.head_split if node.left else [], word_length),
+                      get_padded_word(node.right.head_split if node.right else [], word_length)])
+            
+            S.append([node.index,
+                      node.left.index if node.left else -1,
+                      node.right.index if node.right else -1])
             
             chunk.append(node.span)
-            S_tmp.append([-1]*siblings + child_index_list + [-1]*siblings)
-            
     y = np.array(y, dtype=np.int32)
     T = np.array(T, dtype=np.int32)
     p = np.array(p, dtype=np.int32)
-    
     x = np.array(x, dtype=np.int32)
     w = np.array(w, dtype=np.int32)
-    
-    # S = np.ones((len(y), 2*siblings+1), dtype=np.int32) * -1
-    S = np.ones((len(y), 2*siblings+2), dtype=np.int32) * -1
-    for index, child_index_list in enumerate(S_tmp):
-        for i in range(siblings, len(child_index_list)-siblings):
-            # S[child_index_list[i]] = child_index_list[i-siblings:i+siblings+1]
-            S[child_index_list[i],:-1] = child_index_list[i-siblings:i+siblings+1]
-            S[child_index_list[i], -1] = index
-    S[-1,1] = len(y) - 1
-    
+    S = np.array(S, dtype=np.int32)
     return y, T, p, x, w, S, chunk
             
 def get_batch_input(root_list, degree, word_length=20):
@@ -471,12 +469,13 @@ def get_batch_input(root_list, degree, word_length=20):
     
     samples = len(input_list)
     nodes = max([i[1].shape[0] for i in input_list])
-    words = 3
-    neighbors = 4
+    poses = 4
+    words = 5
+    neighbors = 3
     
     y = -1 * np.ones([nodes, samples                    ], dtype=np.int32)
     T = -1 * np.ones([nodes, samples, degree            ], dtype=np.int32)
-    p = -1 * np.ones([nodes, samples                    ], dtype=np.int32)
+    p = -1 * np.ones([nodes, samples, poses             ], dtype=np.int32)
     x = -1 * np.ones([nodes, samples, words             ], dtype=np.int32)
     w = -3 * np.ones([nodes, samples, words, word_length], dtype=np.int32)
     S = -1 * np.ones([nodes, samples, neighbors         ], dtype=np.int32)
@@ -486,20 +485,13 @@ def get_batch_input(root_list, degree, word_length=20):
         n = i[1].shape[0]
         y[:n, sample      ] = i[0]
         T[:n, sample, :   ] = i[1]
-        p[:n, sample      ] = i[2]
+        p[:n, sample, :   ] = i[2]
         x[:n, sample, :   ] = i[3]
         w[:n, sample, :, :] = i[4]
         S[:n, sample, :   ] = i[5]
         chunk.append(i[6])
     return y, T, p, x, w, S, chunk
     
-def get_one_hot(a, dimension):
-    samples = len(a)
-    A = np.zeros((samples, dimension), dtype=np.float32)
-    A[np.arange(samples), a] = 1
-    A = A * np.not_equal(a,-1).reshape((samples,1))
-    return A
-
 if __name__ == "__main__":
     # extract_conll_vocabulary()
     # extract_collobert_embeddings()
