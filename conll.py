@@ -17,7 +17,7 @@ data_split_list = ["train", "development", "test"]
 
 batch_nodes = 1000
 batch_trees = 16
-patience = 5
+patience = 3
 max_epoches = 30
 
 def read_glove_embedding(model, word_to_index):
@@ -73,8 +73,9 @@ def train():
     
     # Train
     saver = tf.train.Saver()
-    best_score = (-1, -1, -1)
     best_epoch = 0
+    best_score = (-1, -1, -1)
+    best_loss = float("inf")
     for epoch in xrange(1, max_epoches+1):
         print "\n<Epoch %d>" % epoch
         
@@ -83,17 +84,20 @@ def train():
         print "[train] average loss %.3f; elapsed %.0fs" % (loss, time.time() - start_time)
         
         score = evaluate_dataset(model, data["development"], ne_list)
-        print "[validation] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score
+        print "[validation] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score,
         
         if best_score[2] < score[2]:
-            print "  best ever"
-            best_score = score
+            print "best"
             best_epoch = epoch
+            best_score = score
+            best_loss = loss
             saver.save(model.sess, "tmp.model")
-        elif epoch-best_epoch >= patience:
-            break
+        else: print ""
+        if epoch-best_epoch >= patience: break
     
-    print "[best validation] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % best_score
+    print "\n<Best Epoch %d>" % best_epoch
+    print "[train] average loss %.3f" % best_loss
+    print "[validation] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % best_score
     saver.restore(model.sess, "tmp.model")
     score = evaluate_dataset(model, data["test"], ne_list)
     print "[test] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score

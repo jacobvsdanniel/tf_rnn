@@ -25,7 +25,7 @@ class Config(object):
         
         self.degree = 2
         self.poses = 4
-        self.words = 5
+        self.words = 7
         self.neighbors = 3
         
         self.learning_rate = 1e-4

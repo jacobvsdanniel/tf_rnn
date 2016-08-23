@@ -441,14 +441,30 @@ def get_formatted_input(root_node, degree, word_length):
                       node.head_index,
                       node.parent.head_index,
                       node.left.head_index if node.left else -1,
-                      node.right.head_index if node.right else -1])
+                      node.right.head_index if node.right else -1,
+                      node.parent.left.head_index if node.parent.left else -1,
+                      node.parent.right.head_index if node.parent.right else -1])
             
             w.append([get_padded_word(node.word_split, word_length),
                       get_padded_word(node.head_split, word_length),
                       get_padded_word(node.parent.head_split, word_length),
                       get_padded_word(node.left.head_split if node.left else [], word_length),
-                      get_padded_word(node.right.head_split if node.right else [], word_length)])
+                      get_padded_word(node.right.head_split if node.right else [], word_length),
+                      get_padded_word(node.parent.left.head_split if node.parent.left else [], word_length),
+                      get_padded_word(node.parent.right.head_split if node.parent.right else [], word_length)])
+            """
+            x.append([node.word_index,
+                      node.head_index,
+                      node.parent.head_index,
+                      node.parent.left.head_index if node.parent.left else -1,
+                      node.parent.right.head_index if node.parent.right else -1])
             
+            w.append([get_padded_word(node.word_split, word_length),
+                      get_padded_word(node.head_split, word_length),
+                      get_padded_word(node.parent.head_split, word_length),
+                      get_padded_word(node.parent.left.head_split if node.parent.left else [], word_length),
+                      get_padded_word(node.parent.right.head_split if node.parent.right else [], word_length)])
+            """
             S.append([node.index,
                       node.left.index if node.left else -1,
                       node.right.index if node.right else -1])
@@ -470,7 +486,7 @@ def get_batch_input(root_list, degree, word_length=20):
     samples = len(input_list)
     nodes = max([i[1].shape[0] for i in input_list])
     poses = 4
-    words = 5
+    words = 7
     neighbors = 3
     
     y = -1 * np.ones([nodes, samples                    ], dtype=np.int32)
