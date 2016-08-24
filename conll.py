@@ -107,15 +107,11 @@ def make_tree_batch(tree_list):
     
     batch_list = []
     batch = []
-    nodes = 0
     for tree in tree_list:
-        # if tree.nodes >= 100: continue
-        if len(batch)>=batch_trees or nodes+tree.nodes>batch_nodes:
+        if len(batch)>=batch_trees or (len(batch)+1)*tree.nodes>batch_nodes:
             batch_list.append(batch)
             batch = []
-            nodes = 0
         batch.append(tree)
-        nodes += tree.nodes
     batch_list.append(batch)
     
     # random.shuffle(batch_list)
@@ -127,15 +123,11 @@ def make_tree_ner_batch(tree_list, ner_list):
     
     batch_list = []
     batch = []
-    nodes = 0
     for tree, ner in data:
-        # if tree.nodes >= 100: continue
-        if len(batch)>=batch_trees or nodes+tree.nodes>batch_nodes:
+        if len(batch)>=batch_trees or (len(batch)+1)*tree.nodes>batch_nodes:
             batch_list.append(batch)
             batch = []
-            nodes = 0
         batch.append((tree, ner))
-        nodes += tree.nodes
     batch_list.append(batch)
     
     return batch_list

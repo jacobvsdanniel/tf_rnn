@@ -178,6 +178,7 @@ class RNN(object):
             self.b_h = tf.get_variable("b_h", [1, self.hidden_dimension])
         
         def hidden_unit(x):
+            # h = tf.matmul(x, tf.nn.dropout(self.W_h, self.kr)) + self.b_h
             h = tf.matmul(x, self.W_h) + self.b_h
             # return tf.tanh(h)
             # return tf.nn.elu(h)
@@ -192,6 +193,9 @@ class RNN(object):
         Nested gather of x = L[x][index] in while_loop() will raise error in gradient updates.
         """
         self.create_hidden_unit()
+        
+        self.P = tf.nn.dropout(self.P, self.kr)
+        self.X = tf.nn.dropout(self.X, self.kr)
         
         index = tf.constant(0)
         H = tf.zeros([(1+self.nodes) * self.samples, self.hidden_dimension])
@@ -228,6 +232,7 @@ class RNN(object):
             H_hat = tf.reshape(H_hat, [self.nodes * self.samples,
                                        self.neighbors * self.hidden_dimension])
             O = tf.matmul(H_hat, self.W_o) + self.b_o
+            # O = tf.matmul(H_hat, tf.nn.dropout(self.W_o, self.kr)) + self.b_o
             return O
         
         self.f_o = output_unit
