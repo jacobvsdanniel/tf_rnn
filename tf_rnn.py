@@ -179,7 +179,8 @@ class RNN(object):
         
         def hidden_unit(x):
             # h = tf.matmul(x, tf.nn.dropout(self.W_h, self.kr)) + self.b_h
-            h = tf.matmul(x, self.W_h) + self.b_h
+            h = tf.matmul(tf.nn.dropout(x, self.kr), self.W_h) + self.b_h
+            # h = tf.matmul(x, self.W_h) + self.b_h
             # return tf.tanh(h)
             # return tf.nn.elu(h)
             return tf.nn.relu(h)
@@ -194,8 +195,8 @@ class RNN(object):
         """
         self.create_hidden_unit()
         
-        self.P = tf.nn.dropout(self.P, self.kr)
-        self.X = tf.nn.dropout(self.X, self.kr)
+        # self.P = tf.nn.dropout(self.P, self.kr)
+        # self.X = tf.nn.dropout(self.X, self.kr)
         
         index = tf.constant(0)
         H = tf.zeros([(1+self.nodes) * self.samples, self.hidden_dimension])
