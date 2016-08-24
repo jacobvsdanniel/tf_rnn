@@ -392,12 +392,12 @@ def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
             len(ne_to_index), len(pos_to_index), len(character_to_index),
             ne_list)
 
-def get_padded_word(word, word_length):
+def get_padded_word(word, word_length=20):
     word_cut = [-1] + word[:word_length-2] + [-2]
     padding = [-3] * (word_length - len(word_cut))
     return word_cut + padding
 
-def get_formatted_input(root_node, degree, word_length):
+def get_formatted_input(root_node, degree):
     """ Get inputs with RNN required format
     """
     # Get BFS layers
@@ -435,7 +435,9 @@ def get_formatted_input(root_node, degree, word_length):
             p.append([node.pos_index,
                       node.parent.pos_index,
                       node.left.pos_index if node.left else -1,
-                      node.right.pos_index if node.right else -1])
+                      node.right.pos_index if node.right else -1,
+                      node.parent.left.pos_index if node.parent.left else -1,
+                      node.parent.right.pos_index if node.parent.right else -1])
             
             x.append([node.word_index,
                       node.head_index,
@@ -445,26 +447,14 @@ def get_formatted_input(root_node, degree, word_length):
                       node.parent.left.head_index if node.parent.left else -1,
                       node.parent.right.head_index if node.parent.right else -1])
             
-            w.append([get_padded_word(node.word_split, word_length),
-                      get_padded_word(node.head_split, word_length),
-                      get_padded_word(node.parent.head_split, word_length),
-                      get_padded_word(node.left.head_split if node.left else [], word_length),
-                      get_padded_word(node.right.head_split if node.right else [], word_length),
-                      get_padded_word(node.parent.left.head_split if node.parent.left else [], word_length),
-                      get_padded_word(node.parent.right.head_split if node.parent.right else [], word_length)])
-            """
-            x.append([node.word_index,
-                      node.head_index,
-                      node.parent.head_index,
-                      node.parent.left.head_index if node.parent.left else -1,
-                      node.parent.right.head_index if node.parent.right else -1])
+            w.append([get_padded_word(node.word_split),
+                      get_padded_word(node.head_split),
+                      get_padded_word(node.parent.head_split),
+                      get_padded_word(node.left.head_split if node.left else []),
+                      get_padded_word(node.right.head_split if node.right else []),
+                      get_padded_word(node.parent.left.head_split if node.parent.left else []),
+                      get_padded_word(node.parent.right.head_split if node.parent.right else [])])
             
-            w.append([get_padded_word(node.word_split, word_length),
-                      get_padded_word(node.head_split, word_length),
-                      get_padded_word(node.parent.head_split, word_length),
-                      get_padded_word(node.parent.left.head_split if node.parent.left else [], word_length),
-                      get_padded_word(node.parent.right.head_split if node.parent.right else [], word_length)])
-            """
             S.append([node.index,
                       node.left.index if node.left else -1,
                       node.right.index if node.right else -1])
@@ -478,16 +468,17 @@ def get_formatted_input(root_node, degree, word_length):
     S = np.array(S, dtype=np.int32)
     return y, T, p, x, w, S, chunk
             
-def get_batch_input(root_list, degree, word_length=20):
+def get_batch_input(root_list, degree):
     input_list = []
     for root_node in root_list:
-        input_list.append(get_formatted_input(root_node, degree, word_length))
+        input_list.append(get_formatted_input(root_node, degree))
     
     samples = len(input_list)
     nodes = max([i[1].shape[0] for i in input_list])
-    poses = 4
+    poses = 6
     words = 7
     neighbors = 3
+    word_length = 20
     
     y = -1 * np.ones([nodes, samples                    ], dtype=np.int32)
     T = -1 * np.ones([nodes, samples, degree            ], dtype=np.int32)

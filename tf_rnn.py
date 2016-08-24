@@ -24,7 +24,7 @@ class Config(object):
         self.output_dimension = 2
         
         self.degree = 2
-        self.poses = 4
+        self.poses = 6
         self.words = 7
         self.neighbors = 3
         
@@ -175,7 +175,7 @@ class RNN(object):
                                           + self.word_dimension * self.words
                                           + self.hidden_dimension,
                                           self.hidden_dimension])
-            self.b_h = tf.get_variable('b_h', [1, self.hidden_dimension])
+            self.b_h = tf.get_variable("b_h", [1, self.hidden_dimension])
         
         def hidden_unit(x):
             h = tf.matmul(x, self.W_h) + self.b_h
@@ -221,7 +221,7 @@ class RNN(object):
             self.W_o = tf.get_variable("W_o",
                             [self.hidden_dimension * self.neighbors,
                              self.output_dimension])
-            self.b_o = tf.get_variable('b_o', [1, self.output_dimension])
+            self.b_o = tf.get_variable("b_o", [1, self.output_dimension])
             
         def output_unit(H):
             H_hat = tf.gather(H, self.S_hat)
