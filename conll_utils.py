@@ -196,7 +196,6 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
     node.pos = pos
     node.pos_index = pos_to_index[pos]
     pos_count[pos] += 1
-    # if not word: node.pos_index = -1
     
     # Process word info
     node.word_split = [character_to_index[character] for character in word] if word else []
@@ -263,15 +262,18 @@ def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index):
     ne_count = defaultdict(lambda: 0)
     pos_ne_count = defaultdict(lambda: 0)
     
-    for document in raw_data:
-        for part in raw_data[document]:
+    for document in raw_data["auto"]:
+        for part in raw_data["auto"][document]:
+            
             ner_raw_data = defaultdict(lambda: {})
-            for k, v in raw_data[document][part]["ner"].iteritems():
+            for k, v in raw_data["gold"][document][part]["ner"].iteritems():
                 ner_raw_data[k[0]][(k[1], k[2])] = v
             
-            for index, parse in enumerate(raw_data[document][part]["parses"]):
-                head_raw_data = raw_data[document][part]["heads"][index]
-                text_raw_data = raw_data[document][part]["text"][index]
+            for index, parse in enumerate(raw_data["auto"][document][part]["parses"]):
+                if parse.subtrees[0].label == "NOPARSE": continue
+                
+                head_raw_data = raw_data["auto"][document][part]["heads"][index]
+                text_raw_data = raw_data["auto"][document][part]["text"][index]
                 
                 root_node = Node()
                 (degree, nodes
@@ -279,6 +281,7 @@ def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index):
                             root_node, parse, ner_raw_data[index], head_raw_data, text_raw_data,
                             character_to_index, word_to_index, pos_to_index,
                             pos_count, ne_count, pos_ne_count)
+                    
                 max_degree = max(max_degree, degree)
                 root_node.nodes = nodes
                                         
@@ -295,19 +298,26 @@ def label_tree_data(node, pos_to_index, ne_to_index):
         label_tree_data(child, pos_to_index, ne_to_index)
     return
     
-def read_conll_dataset(raw_data_path = "../CONLL2012-intern/conll-2012/v4/data",
-                       character_file = "character.txt",
-                       vocabulary_file = "vocabulary.txt",
-                       pos_file = "pos.txt",
-                       ne_file = "ne.txt"):
-    data_split_list = ["train", "development", "test"]
+def read_conll_dataset(data_split_list = ["train", "development", "test"]):
+    character_file = "character.txt"
+    vocabulary_file = "vocabulary.txt"
+    pos_file = "pos.txt"
+    ne_file = "ne.txt"
+    data_path = "/home/danniel/Desktop/CONLL2012-intern/conll-2012/v4/data"
+    test_auto_data_path = "/home/danniel/Downloads/wu_conll_test/v9/data"
+    annotation_method_list = ["gold", "auto"]
     
     # Read all raw data
     raw_data = {}
     for split in data_split_list:
-        full_path = os.path.join(raw_data_path, split, "data/english/annotations")
-        config = {"file_suffix": "gold_conll", "dir_prefix": full_path}
-        raw_data[split] = load_data(config)
+        raw_data[split] = {}
+        for method in annotation_method_list:
+            if split == "test" and method == "auto":
+                full_path = os.path.join(test_auto_data_path, split, "data/english/annotations")
+            else:
+                full_path = os.path.join(data_path, split, "data/english/annotations")
+            config = {"file_suffix": "%s_conll" % method, "dir_prefix": full_path}
+            raw_data[split][method] = load_data(config)
     
     # Read character list
     character_list, character_to_index = read_character(character_file)

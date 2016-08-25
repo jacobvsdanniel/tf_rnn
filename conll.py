@@ -12,9 +12,6 @@ import tensorflow as tf
 import tf_rnn
 import conll_utils
 
-data_path = "../CONLL2012-intern/conll-2012/v4/data"
-data_split_list = ["train", "development", "test"]
-
 batch_nodes = 1000
 batch_trees = 16
 patience = 3
@@ -56,7 +53,7 @@ def read_collobert_embedding(model, word_to_index):
 def train():
     # Read data
     data, degree, word_to_index, labels, pos_dimension, characters, ne_list = (
-        conll_utils.read_conll_dataset(raw_data_path=data_path))
+        conll_utils.read_conll_dataset())
 
     # Initialize model
     config = tf_rnn.Config()
@@ -187,7 +184,7 @@ def evaluate_confusion(model, data):
 def validate(split):
     # Read data
     data, degree, word_to_index, labels, pos_dimension, characters, ne_list = (
-        conll_utils.read_conll_dataset(raw_data_path=data_path))
+        conll_utils.read_conll_dataset(data_split_list=[split]))
 
     # Initialize model
     config = tf_rnn.Config()
@@ -236,7 +233,7 @@ def validate(split):
 def interpolate_embedding():
     # Read data
     data, degree, word_to_index, labels, pos_dimension, characters, ne_list = (
-        conll_utils.read_conll_dataset(raw_data_path=data_path))
+        conll_utils.read_conll_dataset())
 
     # Initialize model
     config = tf_rnn.Config()
