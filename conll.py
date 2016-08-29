@@ -14,7 +14,7 @@ import conll_utils
 
 batch_nodes = 1000
 batch_trees = 16
-patience = 3
+patience = 5
 max_epoches = 30
 
 def read_glove_embedding(model, word_to_index):

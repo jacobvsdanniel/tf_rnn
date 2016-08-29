@@ -305,6 +305,7 @@ def read_conll_dataset(data_split_list = ["train", "development", "test"]):
     ne_file = "ne.txt"
     data_path = "/home/danniel/Desktop/CONLL2012-intern/conll-2012/v4/data"
     test_auto_data_path = "/home/danniel/Downloads/wu_conll_test/v9/data"
+    data_path_suffix = "data/english/annotations"
     annotation_method_list = ["gold", "auto"]
     
     # Read all raw data
@@ -313,9 +314,9 @@ def read_conll_dataset(data_split_list = ["train", "development", "test"]):
         raw_data[split] = {}
         for method in annotation_method_list:
             if split == "test" and method == "auto":
-                full_path = os.path.join(test_auto_data_path, split, "data/english/annotations")
+                full_path = os.path.join(test_auto_data_path, split, data_path_suffix)
             else:
-                full_path = os.path.join(data_path, split, "data/english/annotations")
+                full_path = os.path.join(data_path, split, data_path_suffix)
             config = {"file_suffix": "%s_conll" % method, "dir_prefix": full_path}
             raw_data[split][method] = load_data(config)
     
@@ -430,6 +431,7 @@ def get_formatted_input(root_node, degree):
     # Extract data from layers bottom-up
     y = []
     T = []
+    R = []
     p = []
     x = []
     w = []
@@ -440,30 +442,22 @@ def get_formatted_input(root_node, degree):
             y.append(node.y)
             
             child_index_list = [child.index for child in node.child_list]
-            T.append(child_index_list + [-1]*(degree-len(node.child_list)))
+            T.append(child_index_list + [-1]*(degree-len(node.child_list))
+                     + [node.parent.index if node.parent!=node else -1])
             
             p.append([node.pos_index,
-                      node.parent.pos_index,
                       node.left.pos_index if node.left else -1,
-                      node.right.pos_index if node.right else -1,
-                      node.parent.left.pos_index if node.parent.left else -1,
-                      node.parent.right.pos_index if node.parent.right else -1])
+                      node.right.pos_index if node.right else -1])
             
             x.append([node.word_index,
                       node.head_index,
-                      node.parent.head_index,
                       node.left.head_index if node.left else -1,
-                      node.right.head_index if node.right else -1,
-                      node.parent.left.head_index if node.parent.left else -1,
-                      node.parent.right.head_index if node.parent.right else -1])
+                      node.right.head_index if node.right else -1])
             
             w.append([get_padded_word(node.word_split),
                       get_padded_word(node.head_split),
-                      get_padded_word(node.parent.head_split),
                       get_padded_word(node.left.head_split if node.left else []),
-                      get_padded_word(node.right.head_split if node.right else []),
-                      get_padded_word(node.parent.left.head_split if node.parent.left else []),
-                      get_padded_word(node.parent.right.head_split if node.parent.right else [])])
+                      get_padded_word(node.right.head_split if node.right else [])])
             
             S.append([node.index,
                       node.left.index if node.left else -1,
@@ -485,13 +479,13 @@ def get_batch_input(root_list, degree):
     
     samples = len(input_list)
     nodes = max([i[1].shape[0] for i in input_list])
-    poses = 6
-    words = 7
+    poses = 3
+    words = 4
     neighbors = 3
     word_length = 20
     
     y = -1 * np.ones([nodes, samples                    ], dtype=np.int32)
-    T = -1 * np.ones([nodes, samples, degree            ], dtype=np.int32)
+    T = -1 * np.ones([nodes, samples, degree+1          ], dtype=np.int32)
     p = -1 * np.ones([nodes, samples, poses             ], dtype=np.int32)
     x = -1 * np.ones([nodes, samples, words             ], dtype=np.int32)
     w = -3 * np.ones([nodes, samples, words, word_length], dtype=np.int32)
