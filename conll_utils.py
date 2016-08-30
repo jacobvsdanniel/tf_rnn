@@ -431,7 +431,6 @@ def get_formatted_input(root_node, degree):
     # Extract data from layers bottom-up
     y = []
     T = []
-    R = []
     p = []
     x = []
     w = []

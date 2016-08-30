@@ -24,6 +24,8 @@ class Config(object):
         # self.hidden_dimension_2 = 200
         self.output_dimension = 2
         
+        self.weighted_child = False
+        
         self.degree = 2
         self.poses = 3
         self.words = 4
@@ -195,7 +197,33 @@ class RNN(object):
         
         self.f_h = hidden_unit
         return
-    
+    """
+    def create_hidden_unit(self):
+        with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
+            self.W_h1 = tf.get_variable("W_h1",
+                                          [self.pos_dimension * self.poses
+                                         + self.word_dimension * self.words,
+                                           self.hidden_dimension])
+            self.W_h2 = tf.get_variable("W_h2",
+                                          [self.hidden_dimension,
+                                           self.hidden_dimension])
+            self.W_h3 = tf.get_variable("W_h3",
+                                          [self.hidden_dimension,
+                                           self.hidden_dimension])
+            self.b_h = tf.get_variable("b_h", [1, self.hidden_dimension])
+        
+        def hidden_unit(x, c):
+            h = tf.matmul(x, self.W_h1) + tf.matmul(c, self.W_h2) + self.b_h
+            return tf.nn.relu(h)
+            
+        def top_down_hidden_unit(x, c):
+            r = tf.matmul(x, self.W_h1) + tf.matmul(c, self.W_h3) + self.b_h
+            return tf.nn.relu(r)
+        
+        self.f_h = hidden_unit
+        self.f_r = top_down_hidden_unit
+        return
+    """
     def create_recursive_hidden_layer(self):
         """ Use while_loop() to construct a recursive graph
         
@@ -206,6 +234,9 @@ class RNN(object):
         index = tf.constant(0)
         H = tf.zeros([(1+self.nodes) * self.samples, self.hidden_dimension])
         
+        with tf.variable_scope("RNN"):
+            self.coef_c = tf.get_variable("coef_c", initializer=tf.ones([self.pos_dimension, 2]))
+        
         def condition(index, H):
             return index < self.nodes
         
@@ -214,10 +245,18 @@ class RNN(object):
             x = tf.slice(self.X, [index,0,0], [1, self.samples, self.words*self.word_dimension])
             
             t = tf.slice(self.T_hat, [index,0,0], [1, self.samples, self.degree])
-            c = tf.reduce_sum(tf.gather(H, t[0,:,:]), reduction_indices=1)
+            if self.weighted_child:
+                pos_index = tf.slice(self.p, [index,0,0], [1, self.samples, 1])
+                coef = tf.gather(self.coef_c, pos_index[0,:,0])
+                C = tf.gather(H, t[0,:,:])
+                c = (C[:,0,:] * tf.slice(coef, [0, 0], [self.samples, 1])
+                   + C[:,1,:] * tf.slice(coef, [0, 1], [self.samples, 1]))
+            else:
+                c = tf.reduce_sum(tf.gather(H, t[0,:,:]), reduction_indices=1)
             c = tf.nn.dropout(c, self.krC)
             
             h = self.f_h(tf.concat(1, [p[0,:,:], x[0,:,:], c]))
+            # h = self.f_h(tf.concat(1, [p[0,:,:], x[0,:,:]]), c)
             h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
             h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_dimension])
             return index+1, H+tf.concat(0, [h_upper, h, h_lower])
@@ -260,6 +299,9 @@ class RNN(object):
             c = tf.nn.dropout(c, self.krC)
             
             r = self.f_r(tf.concat(1, [p[0,:,:], x[0,:,:], c]))
+            # r = self.f_h(tf.concat(1, [p[0,:,:], x[0,:,:], c]))
+            # r = self.f_r(tf.concat(1, [p[0,:,:], x[0,:,:]]), c)
+            
             r_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
             r_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_dimension])
             return index-1, R+tf.concat(0, [r_upper, r, r_lower])
