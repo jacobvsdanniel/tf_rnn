@@ -21,10 +21,7 @@ class Config(object):
         
         self.pos_dimension = 5
         self.hidden_dimension = 300
-        # self.hidden_dimension_2 = 200
         self.output_dimension = 2
-        
-        self.weighted_child = False
         
         self.degree = 2
         self.poses = 3
@@ -33,10 +30,10 @@ class Config(object):
         
         self.learning_rate = 1e-4
         self.epsilon = 1e-4
-        self.keep_rate_P = 0.8
-        self.keep_rate_X = 0.8
-        self.keep_rate_C = 0.8
-        self.keep_rate_H = 0.8
+        self.keep_rate_P = 0.75
+        self.keep_rate_X = 0.75
+        self.keep_rate_H = 0.75
+        self.keep_rate_R = 0.75
         return
         
 class RNN(object):
@@ -47,8 +44,7 @@ class RNN(object):
         self.create_hyper_parameter(config)
         self.create_input()
         self.create_word_embedding_layer()
-        self.create_recursive_hidden_layer()
-        self.create_top_down_hidden_layer()
+        self.create_hidden_layer()
         self.create_output()
         self.create_update_op()
         return
@@ -66,16 +62,18 @@ class RNN(object):
         but will still raise error in apply_gradient.
         """
         # Create placeholders
+        self.e = tf.placeholder(tf.float32, [None, None])
         self.y = tf.placeholder(tf.int32, [None, None])
-        self.T = tf.placeholder(tf.int32, [None, None, self.degree+1])
+        self.T = tf.placeholder(tf.int32, [None, None, self.degree+3])
         self.p = tf.placeholder(tf.int32, [None, None, self.poses])
         self.x = tf.placeholder(tf.int32, [None, None, self.words])
         self.w = tf.placeholder(tf.int32, [None, None, self.words, self.word_length])
         self.S = tf.placeholder(tf.int32, [None, None, self.neighbors])
+        self.l = tf.placeholder(tf.float32, [None])
         self.krP = tf.placeholder(tf.float32)
         self.krX = tf.placeholder(tf.float32)
-        self.krC = tf.placeholder(tf.float32)
         self.krH = tf.placeholder(tf.float32)
+        self.krR = tf.placeholder(tf.float32)
         
         self.nodes = tf.shape(self.T)[0]
         self.samples = tf.shape(self.T)[1]
@@ -91,7 +89,7 @@ class RNN(object):
         
         # Compute indices of children and neighbors
         index_offset = tf.reshape(tf.range(self.samples), [1, self.samples, 1])
-        T_offset = tf.tile(index_offset, [self.nodes, 1, self.degree+1])
+        T_offset = tf.tile(index_offset, [self.nodes, 1, self.degree+3])
         self.T_hat = T_offset + (1+self.T) * self.samples
         S_offset = tf.tile(index_offset, [self.nodes, 1, self.neighbors])
         self.S_hat = S_offset + (1+self.S) * self.samples
@@ -178,138 +176,160 @@ class RNN(object):
         
         X = tf.reshape(X, [self.nodes, self.samples, self.words*self.word_dimension])
         self.X = tf.nn.dropout(X, self.krX)
+        
+        # Mean embedding of leaf words
+        m = tf.slice(self.X, [0,0,0], [self.nodes, self.samples, self.word_dimension])
+        self.m = tf.reduce_sum(m, reduction_indices=0) / tf.reshape(self.l, [self.samples, 1])
         return
     
     def create_hidden_unit(self):
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
-            self.W_h = tf.get_variable("W_h",
-                                         [self.pos_dimension * self.poses
-                                          + self.word_dimension * self.words
-                                          + self.hidden_dimension,
-                                          self.hidden_dimension])
-            self.b_h = tf.get_variable("b_h", [1, self.hidden_dimension])
-        
-        def hidden_unit(x):
-            h = tf.matmul(x, self.W_h) + self.b_h
-            # return tf.tanh(h)
-            # return tf.nn.elu(h)
-            return tf.nn.relu(h)
-        
-        self.f_h = hidden_unit
-        return
-    """
-    def create_hidden_unit(self):
-        with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
-            self.W_h1 = tf.get_variable("W_h1",
-                                          [self.pos_dimension * self.poses
-                                         + self.word_dimension * self.words,
-                                           self.hidden_dimension])
-            self.W_h2 = tf.get_variable("W_h2",
-                                          [self.hidden_dimension,
-                                           self.hidden_dimension])
-            self.W_h3 = tf.get_variable("W_h3",
-                                          [self.hidden_dimension,
-                                           self.hidden_dimension])
-            self.b_h = tf.get_variable("b_h", [1, self.hidden_dimension])
-        
-        def hidden_unit(x, c):
-            h = tf.matmul(x, self.W_h1) + tf.matmul(c, self.W_h2) + self.b_h
-            return tf.nn.relu(h)
+            self.W_h_bottom = tf.get_variable("W_h_bottom",
+                                    [self.pos_dimension * self.poses
+                                   + self.word_dimension * (1+self.words)
+                                   + self.hidden_dimension,
+                                     self.hidden_dimension])
+            self.W_h_top = tf.get_variable("W_h_top",
+                                    [self.pos_dimension * self.poses
+                                   + self.word_dimension * (1+self.words)
+                                   + self.hidden_dimension,
+                                     self.hidden_dimension])
+            self.b_h_bottom = tf.get_variable("b_h_bottom", [1, self.hidden_dimension])
+            self.b_h_top = tf.get_variable("b_h_top", [1, self.hidden_dimension])
             
-        def top_down_hidden_unit(x, c):
-            r = tf.matmul(x, self.W_h1) + tf.matmul(c, self.W_h3) + self.b_h
-            return tf.nn.relu(r)
-        
-        self.f_h = hidden_unit
-        self.f_r = top_down_hidden_unit
+        self.f_h_bottom = lambda x: tf.nn.relu(tf.matmul(x, self.W_h_bottom)+self.b_h_bottom)
+        self.f_h_top = lambda x: tf.nn.relu(tf.matmul(x, self.W_h_top)+self.b_h_top)
         return
-    """
-    def create_recursive_hidden_layer(self):
-        """ Use while_loop() to construct a recursive graph
+    
+    def create_children_unit(self):
+        with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
+            self.W_c = tf.get_variable("W_c",
+                initializer=tf.tile(tf.diag(tf.ones([self.hidden_dimension])), [self.degree,1]))
         
-        Nested gather of x = L[x][index] in while_loop() will raise error in gradient updates.
-        """
+        def sum_children(C):
+            C = tf.reshape(C, [self.samples, self.degree*self.hidden_dimension])
+            c = tf.matmul(C, self.W_c)
+            return c
+        
+        self.f_c = sum_children
+        return
+    
+    def create_hidden_layer(self):
         self.create_hidden_unit()
+        self.create_children_unit()
         
-        index = tf.constant(0)
         H = tf.zeros([(1+self.nodes) * self.samples, self.hidden_dimension])
         
-        with tf.variable_scope("RNN"):
-            self.coef_c = tf.get_variable("coef_c", initializer=tf.ones([self.pos_dimension, 2]))
-        
-        def condition(index, H):
-            return index < self.nodes
-        
-        def body(index, H):
+        # Bottom-up
+        def bottom_condition(index, H):
+            return index <= self.nodes-1
+        def bottom_body(index, H):
             p = tf.slice(self.P, [index,0,0], [1, self.samples, self.poses*self.pos_dimension])
             x = tf.slice(self.X, [index,0,0], [1, self.samples, self.words*self.word_dimension])
             
             t = tf.slice(self.T_hat, [index,0,0], [1, self.samples, self.degree])
-            if self.weighted_child:
-                pos_index = tf.slice(self.p, [index,0,0], [1, self.samples, 1])
-                coef = tf.gather(self.coef_c, pos_index[0,:,0])
-                C = tf.gather(H, t[0,:,:])
-                c = (C[:,0,:] * tf.slice(coef, [0, 0], [self.samples, 1])
-                   + C[:,1,:] * tf.slice(coef, [0, 1], [self.samples, 1]))
-            else:
-                c = tf.reduce_sum(tf.gather(H, t[0,:,:]), reduction_indices=1)
-            c = tf.nn.dropout(c, self.krC)
+            C = tf.gather(H, t[0,:,:])
+            c = tf.reduce_sum(C, reduction_indices=1)
+            # c = self.f_c(C)
+            # c = tf.reshape(C, [self.samples, self.degree*self.hidden_dimension])
             
-            h = self.f_h(tf.concat(1, [p[0,:,:], x[0,:,:], c]))
-            # h = self.f_h(tf.concat(1, [p[0,:,:], x[0,:,:]]), c)
+            h = self.f_h_bottom(tf.concat(1, [self.m, p[0,:,:], x[0,:,:], c]))
+            h = tf.nn.dropout(h, self.krH)
+            
             h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
             h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_dimension])
             return index+1, H+tf.concat(0, [h_upper, h, h_lower])
+        _, H_bottom = tf.while_loop(bottom_condition, bottom_body, [tf.constant(0), H])
         
-        _, H = tf.while_loop(condition, body, [index, H])
-        self.H = tf.nn.dropout(H, self.krH)
-        # _, self.H = tf.while_loop(condition, body, [index, H])
-        return
-    
-    def create_top_down_hidden_unit(self):
-        with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
-            self.W_r = tf.get_variable("W_r",
-                                         [self.pos_dimension * self.poses
-                                          + self.word_dimension * self.words
-                                          + self.hidden_dimension,
-                                          self.hidden_dimension])
-            self.b_r = tf.get_variable("b_r", [1, self.hidden_dimension])
-        
-        def top_down_hidden_unit(x):
-            r = tf.matmul(x, self.W_r) + self.b_r
-            return tf.nn.relu(r)
-        
-        self.f_r = top_down_hidden_unit
-        return
-    
-    def create_top_down_hidden_layer(self):
-        self.create_top_down_hidden_unit()
-        
-        R = tf.zeros([(1+self.nodes) * self.samples, self.hidden_dimension])
-        
-        def condition(index, R):
+        # Top-down
+        def top_condition(index, H):
             return index >= 0
-        
-        def body(index, R):
+        def top_body(index, H):
             p = tf.slice(self.P, [index,0,0], [1, self.samples, self.poses*self.pos_dimension])
             x = tf.slice(self.X, [index,0,0], [1, self.samples, self.words*self.word_dimension])
             
-            t = tf.slice(self.T_hat, [index,0,self.degree], [1, self.samples, 1])
-            c = tf.gather(R, t[0,:,0])
-            c = tf.nn.dropout(c, self.krC)
+            t = tf.slice(self.T_hat, [index,0,self.degree+2], [1, self.samples, 1])
+            c = tf.gather(H, t[0,:,0])
             
-            r = self.f_r(tf.concat(1, [p[0,:,:], x[0,:,:], c]))
-            # r = self.f_h(tf.concat(1, [p[0,:,:], x[0,:,:], c]))
-            # r = self.f_r(tf.concat(1, [p[0,:,:], x[0,:,:]]), c)
+            h = self.f_h_top(tf.concat(1, [self.m, p[0,:,:], x[0,:,:], c]))
+            h = tf.nn.dropout(h, self.krR)
             
-            r_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
-            r_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_dimension])
-            return index-1, R+tf.concat(0, [r_upper, r, r_lower])
+            h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
+            h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_dimension])
+            return index-1, H+tf.concat(0, [h_upper, h, h_lower])
+        _, H_top = tf.while_loop(top_condition, top_body, [self.nodes-1, H])
         
-        _, R = tf.while_loop(condition, body, [self.nodes-1, R])
-        self.R = tf.nn.dropout(R, self.krH)
+        self.H = H_bottom + H_top
+        # self.H = H_bottom
+        return
+    """
+    def create_hidden_unit(self):
+        with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
+            self.W_h_bottom = tf.get_variable("W_h_bottom",
+                                    [self.pos_dimension * self.poses
+                                   + self.word_dimension * self.words
+                                   + self.hidden_dimension,
+                                     self.hidden_dimension])
+            self.W_h_top = tf.get_variable("W_h_top",
+                                    [self.pos_dimension * self.poses
+                                   + self.word_dimension * self.words
+                                   + self.hidden_dimension * 2,
+                                     self.hidden_dimension])
+            self.b_h_bottom = tf.get_variable("b_h_bottom", [1, self.hidden_dimension])
+            self.b_h_top = tf.get_variable("b_h_top", [1, self.hidden_dimension])
+            
+        self.f_h_bottom = lambda x: tf.nn.relu(tf.matmul(x, self.W_h_bottom)+self.b_h_bottom)
+        self.f_h_top = lambda x: tf.nn.relu(tf.matmul(x, self.W_h_top)+self.b_h_top)
         return
     
+    def create_hidden_layer(self):
+        self.create_hidden_unit()
+        
+        H = tf.zeros([(1+self.nodes) * self.samples, self.hidden_dimension])
+        
+        # Bottom-up
+        def bottom_condition(index, H):
+            return index < self.nodes
+        def bottom_body(index, H):
+            p = tf.slice(self.P, [index,0,0], [1, self.samples, self.poses*self.pos_dimension])
+            x = tf.slice(self.X, [index,0,0], [1, self.samples, self.words*self.word_dimension])
+            
+            t = tf.slice(self.T_hat, [index,0,0], [1, self.samples, self.degree])
+            c = tf.reduce_sum(tf.gather(H, t[0,:,:]), reduction_indices=1)
+            
+            h = self.f_h_bottom(tf.concat(1, [p[0,:,:], x[0,:,:], c]))
+            h = tf.nn.dropout(h, self.krH)
+            
+            h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
+            h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_dimension])
+            return index+1, H+tf.concat(0, [h_upper, h, h_lower])
+        _, H_bottom = tf.while_loop(bottom_condition, bottom_body, [tf.constant(0), H])
+        
+        # Top-down
+        def top_condition(index, H):
+            return index >= 0
+        def top_body(index, H):
+            p = tf.slice(self.P, [index,0,0], [1, self.samples, self.poses*self.pos_dimension])
+            x = tf.slice(self.X, [index,0,0], [1, self.samples, self.words*self.word_dimension])
+            
+            t = tf.slice(self.T_hat, [index,0,self.degree+2], [1, self.samples, 1])
+            c = tf.gather(H, t[0,:,0])
+            
+            h0 = tf.slice(H, [(1+index)*self.samples, 0], [self.samples, self.hidden_dimension])
+            
+            h = self.f_h_top(tf.concat(1, [p[0,:,:], x[0,:,:], c, h0]))
+            h = tf.nn.dropout(h, self.krR)
+            
+            h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
+            h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_dimension])
+            return index-1, H+tf.concat(0, [h_upper, h, h_lower])
+        _, H_top = tf.while_loop(top_condition, top_body, [self.nodes-1, H_bottom])
+        
+        # self.H = H_bottom
+        self.H = H_top
+        # self.H = H_bottom + H_top
+        return
+    """
     def create_output_unit(self):
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
             self.W_o = tf.get_variable("W_o",
@@ -326,18 +346,18 @@ class RNN(object):
         
         self.f_o = output_unit
         return
-        
+    
     def create_output(self):
         self.create_output_unit()
         
-        self.O = self.f_o(self.H+self.R)
-        # self.O = self.f_o(self.H)
+        self.O = self.f_o(self.H)
         Y_hat = tf.nn.softmax(self.O)
         self.y_hat = tf.reshape(tf.argmax(Y_hat, 1), [self.nodes, self.samples])
         
+        e = tf.reshape(self.e, [self.nodes * self.samples])
         y = tf.reshape(self.y, [self.nodes * self.samples])
         Y = tf.one_hot(y, self.output_dimension, on_value=1.)
-        self.loss = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits(self.O, Y))
+        self.loss = tf.reduce_sum(e * tf.nn.softmax_cross_entropy_with_logits(self.O, Y))
         return
     
     def create_update_op(self):
@@ -348,25 +368,25 @@ class RNN(object):
     def train(self, root_list):
         """ Train on a single tree
         """
-        y, T, p, x, w, S, _ = conll_utils.get_batch_input(root_list, self.degree)
+        e, y, T, p, x, w, S, _, l = conll_utils.get_batch_input(root_list, self.degree)
         
         loss, _ = self.sess.run([self.loss, self.update_op],
-                    feed_dict={self.y: y, self.T: T,
+                    feed_dict={self.e: e, self.y: y, self.T: T,
                                self.p: p, self.x: x, self.w: w,
-                               self.S:S,
+                               self.S: S, self.l: l,
                                self.krP: self.keep_rate_P, self.krX: self.keep_rate_X,
-                               self.krC: self.keep_rate_C, self.krH: self.keep_rate_H})
+                               self.krH: self.keep_rate_H, self.krR: self.keep_rate_R})
         return loss
     
     def evaluate(self, root_list, chunk_ne_dict_list, ne_list):
-        y, T, p, x, w, S, chunk_list = conll_utils.get_batch_input(root_list, self.degree)
+        e, y, T, p, x, w, S, chunk_list, l = conll_utils.get_batch_input(root_list, self.degree)
         
         y_hat = self.sess.run(self.y_hat,
                     feed_dict={self.T: T, 
                                self.p: p, self.x: x, self.w: w,
-                               self.S:S,
+                               self.S: S, self.l: l,
                                self.krP: 1.0, self.krX: 1.0,
-                               self.krC: 1.0, self.krH: 1.0})
+                               self.krH: 1.0, self.krR: 1.0})
         
         reals = 0.
         positives = 0.
@@ -374,7 +394,7 @@ class RNN(object):
         for sample in range(y.shape[1]): 
             chunk_y_dict = defaultdict(lambda: [0]*(self.output_dimension-1))
             for node, label in enumerate(y_hat[:,sample]):
-                if y[node][sample] == -1: continue
+                if e[node][sample] == 0: continue
                 if label == self.output_dimension - 1: continue
                 chunk_y_dict[chunk_list[sample][node]][label] += 1
                 
@@ -388,14 +408,14 @@ class RNN(object):
         return true_postives, positives, reals
     
     def predict(self, root_node):
-        y, T, p, x, w, S, chunk_list = conll_utils.get_batch_input([root_node], self.degree)
+        _, y, T, p, x, w, S, chunk_list, l = conll_utils.get_batch_input([root_node], self.degree)
         
         y_hat = self.sess.run(self.y_hat,
                     feed_dict={self.T: T, 
                                self.p: p, self.x: x, self.w: w,
-                               self.S:S,
+                               self.S: S, self.l: l,
                                self.krP: 1.0, self.krX: 1.0,
-                               self.krC: 1.0, self.krH: 1.0})
+                               self.krH: 1.0, self.krR: 1.0})
         
         y, y_hat = y[:,0], y_hat[:,0]
         confusion_matrix = np.zeros([19, 19], dtype=np.int32)

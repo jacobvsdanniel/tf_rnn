@@ -12,8 +12,8 @@ from pstree import PSTree
 
 class Node(object):
     def __init__(self):
-        self.parent = self
         self.child_list = []
+        self.parent = None
         self.left = None
         self.right = None
         
@@ -184,13 +184,14 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
                     pos_count, ne_count, pos_ne_count):
     # if len(tree.subtrees) == 1:
         # return construct_node(node, tree.subtrees[0], ner_raw_data, head_raw_data, text_raw_data,
-                                # word_to_index, pos_to_index,
+                                # character_to_index, word_to_index, pos_to_index,
                                 # pos_count, ne_count, pos_ne_count)
     pos = tree.label
     word = tree.word
     span = tree.span
     head = tree.head if hasattr(tree, "head") else head_raw_data[(span, pos)][1]
     ne = ner_raw_data[span] if span in ner_raw_data else "NONE"
+    # if ne in ["WORK_OF_ART", "FAC"]: ne = "NONE"
     
     # Process pos info
     node.pos = pos
@@ -232,7 +233,7 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
             tree.subtrees = [new_tree, tree.subtrees[-1]]
         else:
             tree.subtrees = [tree.subtrees[0], new_tree]
-            
+         
     # Process children
     node.degree = len(tree.subtrees)
     max_degree = node.degree
@@ -429,6 +430,7 @@ def get_formatted_input(root_node, degree):
             node.index = index
     
     # Extract data from layers bottom-up
+    e = []
     y = []
     T = []
     p = []
@@ -436,13 +438,19 @@ def get_formatted_input(root_node, degree):
     w = []
     S = []
     chunk = []
+    l = 0
     for layer in reversed(layer_list):
         for node in layer:
+            e.append(1)
+            
             y.append(node.y)
             
             child_index_list = [child.index for child in node.child_list]
-            T.append(child_index_list + [-1]*(degree-len(node.child_list))
-                     + [node.parent.index if node.parent!=node else -1])
+            T.append(child_index_list
+                     + [-1] * (degree-len(node.child_list))
+                     + [node.left.index if node.left else -1,
+                        node.right.index if node.right else -1,
+                        node.parent.index if node.parent else -1])
             
             p.append([node.pos_index,
                       node.left.pos_index if node.left else -1,
@@ -458,18 +466,29 @@ def get_formatted_input(root_node, degree):
                       get_padded_word(node.left.head_split if node.left else []),
                       get_padded_word(node.right.head_split if node.right else [])])
             
+            # S.append([node.index,
+                      # node.left.index if node.left else -1,
+                      # node.right.index if node.right else -1,
+                      # node.parent.index if node.parent else -1])
             S.append([node.index,
                       node.left.index if node.left else -1,
                       node.right.index if node.right else -1])
+            # S.append([node.index,
+                      # node.parent.index if node.parent else -1])
+            # S.append([node.index])
             
             chunk.append(node.span)
+    
+            if node.word_index != -1: l += 1
+            
+    e = np.array(e, dtype=np.float32)
     y = np.array(y, dtype=np.int32)
     T = np.array(T, dtype=np.int32)
     p = np.array(p, dtype=np.int32)
     x = np.array(x, dtype=np.int32)
     w = np.array(w, dtype=np.int32)
     S = np.array(S, dtype=np.int32)
-    return y, T, p, x, w, S, chunk
+    return e, y, T, p, x, w, S, chunk, l
             
 def get_batch_input(root_list, degree):
     input_list = []
@@ -483,24 +502,28 @@ def get_batch_input(root_list, degree):
     neighbors = 3
     word_length = 20
     
+    e =  0 * np.ones([nodes, samples                    ], dtype=np.float32)
     y = -1 * np.ones([nodes, samples                    ], dtype=np.int32)
-    T = -1 * np.ones([nodes, samples, degree+1          ], dtype=np.int32)
+    T = -1 * np.ones([nodes, samples, degree+3          ], dtype=np.int32)
     p = -1 * np.ones([nodes, samples, poses             ], dtype=np.int32)
     x = -1 * np.ones([nodes, samples, words             ], dtype=np.int32)
     w = -3 * np.ones([nodes, samples, words, word_length], dtype=np.int32)
     S = -1 * np.ones([nodes, samples, neighbors         ], dtype=np.int32)
     chunk = []
+    l =  np.zeros(samples, dtype=np.float32)
     
     for sample, i in enumerate(input_list):
         n = i[1].shape[0]
-        y[:n, sample      ] = i[0]
-        T[:n, sample, :   ] = i[1]
-        p[:n, sample, :   ] = i[2]
-        x[:n, sample, :   ] = i[3]
-        w[:n, sample, :, :] = i[4]
-        S[:n, sample, :   ] = i[5]
-        chunk.append(i[6])
-    return y, T, p, x, w, S, chunk
+        e[:n, sample      ] = i[0]
+        y[:n, sample      ] = i[1]
+        T[:n, sample, :   ] = i[2]
+        p[:n, sample, :   ] = i[3]
+        x[:n, sample, :   ] = i[4]
+        w[:n, sample, :, :] = i[5]
+        S[:n, sample, :   ] = i[6]
+        chunk.append(i[7])
+        l[sample] = i[8]
+    return e, y, T, p, x, w, S, chunk, l
     
 if __name__ == "__main__":
     # extract_conll_vocabulary()

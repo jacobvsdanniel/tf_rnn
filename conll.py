@@ -14,7 +14,7 @@ import conll_utils
 
 batch_nodes = 1000
 batch_trees = 16
-patience = 5
+patience = 3
 max_epoches = 30
 
 def read_glove_embedding(model, word_to_index):
@@ -143,6 +143,7 @@ def train_dataset(model, data):
         
         trees += len(batch)
         sys.stdout.write("\r(%5d/%5d) average loss %.3f" % (trees, total_trees, total_loss/trees))
+        sys.stdout.flush()
     sys.stdout.write("\r" + " "*64 + "\r")
     return total_loss / total_trees
 
@@ -160,9 +161,9 @@ def evaluate_dataset(model, data, ne_list):
         total_true_postives += true_postives
         total_postives += postives
         total_reals += reals
-    # print "true_postives", total_true_postives
-    # print "positives", total_postives
-    # print "reals", total_reals
+    print "true_postives", total_true_postives
+    print "positives", total_postives
+    print "reals", total_reals
     
     try:
         precision = total_true_postives / total_postives
