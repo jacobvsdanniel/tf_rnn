@@ -12,7 +12,7 @@ class Config(object):
         self.vocabulary_size = 5
         self.word_to_word_embeddings = 300
         
-        self.use_character_ngram = False
+        self.use_character_ngram = True
         self.alphabet_size = 5
         self.character_embeddings = 25
         self.word_length = 20
@@ -82,8 +82,8 @@ class RNN(object):
         with tf.variable_scope("RNN", initializer=tf.random_normal_initializer(stddev=0.1)):
             self.L = tf.get_variable("L",
                 [self.vocabulary_size, self.word_to_word_embeddings])
-            # self.C = tf.get_variable("C",
-                # [2+self.alphabet_size, self.character_embeddings])
+            self.C = tf.get_variable("C",
+                [2+self.alphabet_size, self.character_embeddings])
         self.L_hat = tf.concat(0, [tf.zeros([1, self.word_to_word_embeddings]), self.L])
         # self.C_hat = tf.concat(0, [tf.zeros([1, self.character_embeddings]), self.C])
         
@@ -181,42 +181,53 @@ class RNN(object):
         m = tf.slice(self.X, [0,0,0], [self.nodes, self.samples, self.word_dimension])
         self.m = tf.reduce_sum(m, reduction_indices=0) / tf.reshape(self.l, [self.samples, 1])
         return
-    
-    def create_hidden_unit(self):
+    """
+    def get_hidden_unit(self, name):
+        self.input_dimension = (self.pos_dimension * self.poses 
+                              + self.word_dimension * (1+self.words))
+        self.W[name] = {}
+        self.b[name] = {}
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
-            self.W_h_bottom = tf.get_variable("W_h_bottom",
-                                    [self.pos_dimension * self.poses
-                                   + self.word_dimension * (1+self.words)
-                                   + self.hidden_dimension,
-                                     self.hidden_dimension])
-            self.W_h_top = tf.get_variable("W_h_top",
-                                    [self.pos_dimension * self.poses
-                                   + self.word_dimension * (1+self.words)
-                                   + self.hidden_dimension,
-                                     self.hidden_dimension])
-            self.b_h_bottom = tf.get_variable("b_h_bottom", [1, self.hidden_dimension])
-            self.b_h_top = tf.get_variable("b_h_top", [1, self.hidden_dimension])
+            with tf.variable_scope(name):
+                self.W[name]["h"] = tf.get_variable("W_h",
+                                        [self.input_dimension, self.hidden_dimension])
+                self.b[name]["h"] = tf.get_variable("b_h", [1, self.hidden_dimension])
+                
+        def hidden_unit(x, c):
+            h = tf.tanh(tf.matmul(x, self.W[name]["h"]) + self.b[name]["h"])
+            h = tf.tanh(h + c)
+            return h
+        return hidden_unit
+    """
+    def get_hidden_unit(self, name):
+        self.input_dimension = (self.pos_dimension * self.poses 
+                              + self.word_dimension * (1+self.words)
+                              + self.hidden_dimension)
+        self.W[name] = {}
+        self.b[name] = {}
+        # self.a[name] = {}
+        with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
+            with tf.variable_scope(name):
+                self.W[name]["h"] = tf.get_variable("W_h",
+                                        [self.input_dimension, self.hidden_dimension])
+                self.b[name]["h"] = tf.get_variable("b_h", [1, self.hidden_dimension])
+                # self.a[name]["h"] = tf.get_variable("a_h", initializer=0.25
+                                        # * tf.ones([1, self.hidden_dimension], dtype=tf.float32))
+                
+        def hidden_unit(x):
+            h = tf.matmul(x, self.W[name]["h"]) + self.b[name]["h"]
             
-        self.f_h_bottom = lambda x: tf.nn.relu(tf.matmul(x, self.W_h_bottom)+self.b_h_bottom)
-        self.f_h_top = lambda x: tf.nn.relu(tf.matmul(x, self.W_h_top)+self.b_h_top)
-        return
-    
-    def create_children_unit(self):
-        with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
-            self.W_c = tf.get_variable("W_c",
-                initializer=tf.tile(tf.diag(tf.ones([self.hidden_dimension])), [self.degree,1]))
-        
-        def sum_children(C):
-            C = tf.reshape(C, [self.samples, self.degree*self.hidden_dimension])
-            c = tf.matmul(C, self.W_c)
-            return c
-        
-        self.f_c = sum_children
-        return
+            h = tf.nn.relu(h)
+            # h = tf.select(tf.greater(h, 0), h, h*self.a[name]["h"])
+            return h
+        return hidden_unit
     
     def create_hidden_layer(self):
-        self.create_hidden_unit()
-        self.create_children_unit()
+        self.W = {}
+        self.b = {}
+        self.a = {}
+        self.f_h_bottom = self.get_hidden_unit("hidden_bottom")
+        self.f_h_top = self.get_hidden_unit("hidden_top")
         
         H = tf.zeros([(1+self.nodes) * self.samples, self.hidden_dimension])
         
@@ -228,12 +239,10 @@ class RNN(object):
             x = tf.slice(self.X, [index,0,0], [1, self.samples, self.words*self.word_dimension])
             
             t = tf.slice(self.T_hat, [index,0,0], [1, self.samples, self.degree])
-            C = tf.gather(H, t[0,:,:])
-            c = tf.reduce_sum(C, reduction_indices=1)
-            # c = self.f_c(C)
-            # c = tf.reshape(C, [self.samples, self.degree*self.hidden_dimension])
+            c = tf.reduce_sum(tf.gather(H, t[0,:,:]), reduction_indices=1)
             
             h = self.f_h_bottom(tf.concat(1, [self.m, p[0,:,:], x[0,:,:], c]))
+            # h = self.f_h_bottom(tf.concat(1, [self.m, p[0,:,:], x[0,:,:]]), c)
             h = tf.nn.dropout(h, self.krH)
             
             h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
@@ -252,6 +261,7 @@ class RNN(object):
             c = tf.gather(H, t[0,:,0])
             
             h = self.f_h_top(tf.concat(1, [self.m, p[0,:,:], x[0,:,:], c]))
+            # h = self.f_h_top(tf.concat(1, [self.m, p[0,:,:], x[0,:,:]]), c)
             h = tf.nn.dropout(h, self.krR)
             
             h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
@@ -260,95 +270,27 @@ class RNN(object):
         _, H_top = tf.while_loop(top_condition, top_body, [self.nodes-1, H])
         
         self.H = H_bottom + H_top
-        # self.H = H_bottom
-        return
-    """
-    def create_hidden_unit(self):
-        with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
-            self.W_h_bottom = tf.get_variable("W_h_bottom",
-                                    [self.pos_dimension * self.poses
-                                   + self.word_dimension * self.words
-                                   + self.hidden_dimension,
-                                     self.hidden_dimension])
-            self.W_h_top = tf.get_variable("W_h_top",
-                                    [self.pos_dimension * self.poses
-                                   + self.word_dimension * self.words
-                                   + self.hidden_dimension * 2,
-                                     self.hidden_dimension])
-            self.b_h_bottom = tf.get_variable("b_h_bottom", [1, self.hidden_dimension])
-            self.b_h_top = tf.get_variable("b_h_top", [1, self.hidden_dimension])
-            
-        self.f_h_bottom = lambda x: tf.nn.relu(tf.matmul(x, self.W_h_bottom)+self.b_h_bottom)
-        self.f_h_top = lambda x: tf.nn.relu(tf.matmul(x, self.W_h_top)+self.b_h_top)
         return
     
-    def create_hidden_layer(self):
-        self.create_hidden_unit()
-        
-        H = tf.zeros([(1+self.nodes) * self.samples, self.hidden_dimension])
-        
-        # Bottom-up
-        def bottom_condition(index, H):
-            return index < self.nodes
-        def bottom_body(index, H):
-            p = tf.slice(self.P, [index,0,0], [1, self.samples, self.poses*self.pos_dimension])
-            x = tf.slice(self.X, [index,0,0], [1, self.samples, self.words*self.word_dimension])
-            
-            t = tf.slice(self.T_hat, [index,0,0], [1, self.samples, self.degree])
-            c = tf.reduce_sum(tf.gather(H, t[0,:,:]), reduction_indices=1)
-            
-            h = self.f_h_bottom(tf.concat(1, [p[0,:,:], x[0,:,:], c]))
-            h = tf.nn.dropout(h, self.krH)
-            
-            h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
-            h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_dimension])
-            return index+1, H+tf.concat(0, [h_upper, h, h_lower])
-        _, H_bottom = tf.while_loop(bottom_condition, bottom_body, [tf.constant(0), H])
-        
-        # Top-down
-        def top_condition(index, H):
-            return index >= 0
-        def top_body(index, H):
-            p = tf.slice(self.P, [index,0,0], [1, self.samples, self.poses*self.pos_dimension])
-            x = tf.slice(self.X, [index,0,0], [1, self.samples, self.words*self.word_dimension])
-            
-            t = tf.slice(self.T_hat, [index,0,self.degree+2], [1, self.samples, 1])
-            c = tf.gather(H, t[0,:,0])
-            
-            h0 = tf.slice(H, [(1+index)*self.samples, 0], [self.samples, self.hidden_dimension])
-            
-            h = self.f_h_top(tf.concat(1, [p[0,:,:], x[0,:,:], c, h0]))
-            h = tf.nn.dropout(h, self.krR)
-            
-            h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
-            h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_dimension])
-            return index-1, H+tf.concat(0, [h_upper, h, h_lower])
-        _, H_top = tf.while_loop(top_condition, top_body, [self.nodes-1, H_bottom])
-        
-        # self.H = H_bottom
-        self.H = H_top
-        # self.H = H_bottom + H_top
-        return
-    """
-    def create_output_unit(self):
+    def get_output_unit(self, name):
+        self.W[name] = {}
+        self.b[name] = {}
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
-            self.W_o = tf.get_variable("W_o",
-                            [self.hidden_dimension * self.neighbors,
-                             self.output_dimension])
-            self.b_o = tf.get_variable("b_o", [1, self.output_dimension])
+            with tf.variable_scope(name):
+                self.W[name]["o"] = tf.get_variable("W_o",
+                                        [self.hidden_dimension * self.neighbors,
+                                         self.output_dimension])
+                self.b[name]["o"] = tf.get_variable("b_o", [1, self.output_dimension])
             
         def output_unit(H):
-            H_hat = tf.gather(H, self.S_hat)
-            H_hat = tf.reshape(H_hat, [self.nodes * self.samples,
-                                       self.neighbors * self.hidden_dimension])
-            O = tf.matmul(H_hat, self.W_o) + self.b_o
+            H = tf.gather(H, self.S_hat)
+            H = tf.reshape(H, [self.nodes * self.samples, self.neighbors * self.hidden_dimension])
+            O = tf.matmul(H, self.W[name]["o"]) + self.b[name]["o"]
             return O
-        
-        self.f_o = output_unit
-        return
+        return output_unit
     
     def create_output(self):
-        self.create_output_unit()
+        self.f_o = self.get_output_unit("output")
         
         self.O = self.f_o(self.H)
         Y_hat = tf.nn.softmax(self.O)

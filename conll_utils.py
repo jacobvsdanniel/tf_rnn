@@ -480,7 +480,7 @@ def get_formatted_input(root_node, degree):
             chunk.append(node.span)
     
             if node.word_index != -1: l += 1
-            
+                    
     e = np.array(e, dtype=np.float32)
     y = np.array(y, dtype=np.int32)
     T = np.array(T, dtype=np.int32)
