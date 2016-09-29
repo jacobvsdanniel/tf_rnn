@@ -12,7 +12,7 @@ class Config(object):
         self.vocabulary_size = 5
         self.word_to_word_embeddings = 300
         
-        self.use_character_ngram = True
+        self.use_character_ngram = False
         self.alphabet_size = 5
         self.character_embeddings = 25
         self.word_length = 20
@@ -20,7 +20,7 @@ class Config(object):
         self.kernels = 40
         
         self.pos_dimension = 5
-        self.hidden_dimension = 300
+        self.hidden_dimension = 450
         self.output_dimension = 2
         
         self.degree = 2
@@ -29,11 +29,11 @@ class Config(object):
         self.neighbors = 3
         
         self.learning_rate = 1e-4
-        self.epsilon = 1e-4
-        self.keep_rate_P = 0.75
-        self.keep_rate_X = 0.75
-        self.keep_rate_H = 0.75
-        self.keep_rate_R = 0.75
+        self.epsilon = 1e-2
+        self.keep_rate_P = 0.65
+        self.keep_rate_X = 0.65
+        self.keep_rate_H = 0.65
+        self.keep_rate_R = 0.65
         return
         
 class RNN(object):
@@ -127,7 +127,7 @@ class RNN(object):
         return
         
     def create_word_highway_unit(self):
-        layers = 0
+        layers = 1
         self.W_x_mlp = []
         self.W_x_gate = []
         self.b_x_mlp = []

@@ -81,7 +81,7 @@ def train():
         print "[train] average loss %.3f; elapsed %.0fs" % (loss, time.time() - start_time)
         
         score = evaluate_dataset(model, data["development"], ne_list)
-        print "[validation] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score,
+        print "[validation] precision=%.1f%% recall=%.1f%% f1=%.3f%%" % score,
         
         if best_score[2] < score[2]:
             print "best"
@@ -94,10 +94,10 @@ def train():
     
     print "\n<Best Epoch %d>" % best_epoch
     print "[train] average loss %.3f" % best_loss
-    print "[validation] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % best_score
+    print "[validation] precision=%.1f%% recall=%.1f%% f1=%.3f%%" % best_score
     saver.restore(model.sess, "tmp.model")
     score = evaluate_dataset(model, data["test"], ne_list)
-    print "[test] precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score
+    print "[test] precision=%.1f%% recall=%.1f%% f1=%.3f%%" % score
    
 def make_tree_batch(tree_list):
     tree_list = sorted(tree_list, key=lambda tree: tree.nodes)
@@ -111,7 +111,7 @@ def make_tree_batch(tree_list):
         batch.append(tree)
     batch_list.append(batch)
     
-    # random.shuffle(batch_list)
+    random.shuffle(batch_list)
     return batch_list
 
 def make_tree_ner_batch(tree_list, ner_list):
@@ -142,7 +142,7 @@ def train_dataset(model, data):
         total_loss += loss
         
         trees += len(batch)
-        sys.stdout.write("\r(%5d/%5d) average loss %.3f" % (trees, total_trees, total_loss/trees))
+        sys.stdout.write("\r(%5d/%5d) average loss %.3f   " % (trees, total_trees, total_loss/trees))
         sys.stdout.flush()
     sys.stdout.write("\r" + " "*64 + "\r")
     return total_loss / total_trees
@@ -212,7 +212,7 @@ def validate(split):
     
     saver.restore(model.sess, "tmp.model")
     score = evaluate_dataset(model, data[split], ne_list)
-    print "[%s]" % split + " precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score
+    print "[%s]" % split + " precision=%.1f%% recall=%.1f%% f1=%.3f%%" % score
     return
     confusion_matrix = evaluate_confusion(model, data[split])
     
