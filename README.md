@@ -38,6 +38,7 @@ glove_file = "/home/danniel/Downloads/glove.840B.300d.txt"
 ```
 
 4) Extract the alphabet, vocabulary, and embeddings
+
 Modify and run ontonotes.py
 ```python
 if __name__ == "__main__":
@@ -49,17 +50,20 @@ if __name__ == "__main__":
 
 ## How to train and test
 1) Train a model pn OntoNotes.
+
 ```
 python evaluate.py 2> tmp.txt
 ```
 It generates a model file tmp.model
 
 2) Test the model on the test split of OntoNotes
+
 ```
 python evaluate.py -m evaluate -s test 2> tmp.txt
 ```
 
 3) Options
+
 To see all options, run
 ```
 python evaluate.py -h
