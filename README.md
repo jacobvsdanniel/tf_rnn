@@ -49,14 +49,14 @@ if __name__ == "__main__":
 ```
 
 ## How to train and test
-1) Train a model pn OntoNotes.
+1) Train a model on OntoNotes 5.0.
 
 ```
 python evaluate.py 2> tmp.txt
 ```
 It generates a model file tmp.model
 
-2) Test the model on the test split of OntoNotes
+2) Test the model on the test split of OntoNotes 5.0
 
 ```
 python evaluate.py -m evaluate -s test 2> tmp.txt
