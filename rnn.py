@@ -3,16 +3,30 @@ from collections import defaultdict
 import numpy as np
 import tensorflow as tf
 
-import conll_utils
+class Node(object):
+    def __init__(self):
+        self.child_list = []
+        self.parent = None
+        self.left = None
+        self.right = None
+        
+    def add_child(self, child):
+        if self.child_list:
+            sibling = self.child_list[-1]
+            sibling.right = child
+            child.left = sibling
+        self.child_list.append(child)
+        child.parent = self
 
 class Config(object):
     """ Store hyper parameters for tree models
     """
+    
     def __init__(self):
         self.vocabulary_size = 5
         self.word_to_word_embeddings = 300
         
-        self.use_character_ngram = False
+        self.use_character_to_word_embedding = False
         self.alphabet_size = 5
         self.character_embeddings = 25
         self.word_length = 20
@@ -37,7 +51,12 @@ class Config(object):
         return
         
 class RNN(object):
-    """ A Tensorflow implementation of a Recursive Neural Network
+    """ A special Bidrectional Recursive Neural Network
+    
+    From an input tree, it classifies each node and identifies positive spans and their labels.
+    
+    Instantiating an object of this class only defines a Tensorflow computation graph
+    under the name scope "RNN". Weights of a model instance reside in a Tensorflow session.
     """
 
     def __init__(self, config):
@@ -50,12 +69,14 @@ class RNN(object):
         return
         
     def create_hyper_parameter(self, config):
+        """ Add attributes of cofig to self
+        """
         for parameter in dir(config):
             if parameter[0] == "_": continue
             setattr(self, parameter, getattr(config, parameter))
         
     def create_input(self):
-        """ Prepare input embeddings
+        """ Construct the input layer and embedding dictionaries
         
         If L is a tensor, wild indices will cause tf.gather() to raise error.
         Since L is a variable, gathering with some index of x being -1 will return zeroes,
@@ -78,12 +99,13 @@ class RNN(object):
         self.nodes = tf.shape(self.T)[0]
         self.samples = tf.shape(self.T)[1]
         
-        # Create embeddings dictionaries
+        # Create embedding dictionaries
+        # We use one-hot character embeddings so no dictionary is needed
         with tf.variable_scope("RNN", initializer=tf.random_normal_initializer(stddev=0.1)):
             self.L = tf.get_variable("L",
                 [self.vocabulary_size, self.word_to_word_embeddings])
-            self.C = tf.get_variable("C",
-                [2+self.alphabet_size, self.character_embeddings])
+            # self.C = tf.get_variable("C",
+                # [2+self.alphabet_size, self.character_embeddings])
         self.L_hat = tf.concat(0, [tf.zeros([1, self.word_to_word_embeddings]), self.L])
         # self.C_hat = tf.concat(0, [tf.zeros([1, self.character_embeddings]), self.C])
         
@@ -100,7 +122,12 @@ class RNN(object):
         self.P = tf.nn.dropout(P, self.krP)
         return
     
-    def create_character_ngram_unit(self):
+    def create_convolution_layers(self):
+        """ Create a unit which use the character string of a word to generate its embedding
+        
+        Special characters: -1: start, -2: end, -3: padding
+        We use one-hot character embeddings so no dictionary is needed.
+        """
         self.K = [None]
         self.character_embeddings = self.alphabet_size
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
@@ -108,7 +135,7 @@ class RNN(object):
                 self.K.append(tf.get_variable("K%d" % window,
                                 [window, self.character_embeddings, 1, self.kernels*window]))
         
-        def character_ngram_unit(w):
+        def cnn(w):
             W = tf.one_hot(w+2, self.alphabet_size, on_value=1.)
             # W = tf.gather(self.C_hat, w+3)
             W = tf.reshape(W, [-1, self.word_length, self.character_embeddings, 1])
@@ -123,16 +150,20 @@ class RNN(object):
             W_hat = tf.concat(1, W_hat)
             return tf.nn.relu(W_hat)
         
-        self.f_x_cnn = character_ngram_unit
+        self.f_x_cnn = cnn
         return
         
-    def create_word_highway_unit(self):
+    def create_highway_layers(self):
+        """ Create a unit to transform the embedding of a word from CNN 
+        
+        A highway layer is a linear combination of a fully connected layer and an identity layer.
+        """
         layers = 1
         self.W_x_mlp = []
         self.W_x_gate = []
         self.b_x_mlp = []
         self.b_x_gate = []
-        for layer in range(layers):
+        for layer in xrange(layers):
             with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
                 self.W_x_mlp.append(tf.get_variable("W_x_mlp_%d" % layer,
                                             [self.character_to_word_embeddings,
@@ -147,27 +178,30 @@ class RNN(object):
                 self.b_x_gate.append(tf.get_variable("b_x_gate_%d" % layer,
                                             [1, self.character_to_word_embeddings]))
                 
-        def word_highway_unit(x):
+        def highway(x):
             data = x
-            for layer in range(layers):
+            for layer in xrange(layers):
                 mlp = tf.nn.relu(tf.matmul(data, self.W_x_mlp[layer]) + self.b_x_mlp[layer])
                 gate = tf.sigmoid(tf.matmul(data, self.W_x_gate[layer]) + self.b_x_gate[layer])
                 data = mlp*gate + data*(1-gate)
             return data
-        self.f_x_highway = word_highway_unit
+            
+        self.f_x_highway = highway
         return
     
     def create_word_embedding_layer(self):
+        """ Create a layer to compute word embeddings for all words
+        """
         self.word_dimension = self.word_to_word_embeddings
         X = tf.gather(self.L_hat, self.x+1)
         
-        if self.use_character_ngram:
+        if self.use_character_to_word_embedding:
             conv_windows = (1+self.max_conv_window) * self.max_conv_window / 2
             self.character_to_word_embeddings = conv_windows * self.kernels
             self.word_dimension += self.character_to_word_embeddings
             
-            self.create_character_ngram_unit()
-            self.create_word_highway_unit()
+            self.create_convolution_layers()
+            self.create_highway_layers()
             
             w = tf.reshape(self.w, [self.nodes*self.samples*self.words, self.word_length])
             W = self.f_x_highway(self.f_x_cnn(w))
@@ -181,48 +215,30 @@ class RNN(object):
         m = tf.slice(self.X, [0,0,0], [self.nodes, self.samples, self.word_dimension])
         self.m = tf.reduce_sum(m, reduction_indices=0) / tf.reshape(self.l, [self.samples, 1])
         return
-    """
+    
     def get_hidden_unit(self, name):
-        self.input_dimension = (self.pos_dimension * self.poses 
-                              + self.word_dimension * (1+self.words))
-        self.W[name] = {}
-        self.b[name] = {}
-        with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
-            with tf.variable_scope(name):
-                self.W[name]["h"] = tf.get_variable("W_h",
-                                        [self.input_dimension, self.hidden_dimension])
-                self.b[name]["h"] = tf.get_variable("b_h", [1, self.hidden_dimension])
-                
-        def hidden_unit(x, c):
-            h = tf.tanh(tf.matmul(x, self.W[name]["h"]) + self.b[name]["h"])
-            h = tf.tanh(h + c)
-            return h
-        return hidden_unit
-    """
-    def get_hidden_unit(self, name):
+        """ Create a unit to compute the hidden features of one direction of a node
+        """
         self.input_dimension = (self.pos_dimension * self.poses 
                               + self.word_dimension * (1+self.words)
                               + self.hidden_dimension)
         self.W[name] = {}
         self.b[name] = {}
-        # self.a[name] = {}
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
             with tf.variable_scope(name):
                 self.W[name]["h"] = tf.get_variable("W_h",
                                         [self.input_dimension, self.hidden_dimension])
                 self.b[name]["h"] = tf.get_variable("b_h", [1, self.hidden_dimension])
-                # self.a[name]["h"] = tf.get_variable("a_h", initializer=0.25
-                                        # * tf.ones([1, self.hidden_dimension], dtype=tf.float32))
                 
         def hidden_unit(x):
             h = tf.matmul(x, self.W[name]["h"]) + self.b[name]["h"]
-            
             h = tf.nn.relu(h)
-            # h = tf.select(tf.greater(h, 0), h, h*self.a[name]["h"])
             return h
         return hidden_unit
     
     def create_hidden_layer(self):
+        """ Create a layer to compute hidden features for all nodes
+        """
         self.W = {}
         self.b = {}
         self.a = {}
@@ -242,7 +258,6 @@ class RNN(object):
             c = tf.reduce_sum(tf.gather(H, t[0,:,:]), reduction_indices=1)
             
             h = self.f_h_bottom(tf.concat(1, [self.m, p[0,:,:], x[0,:,:], c]))
-            # h = self.f_h_bottom(tf.concat(1, [self.m, p[0,:,:], x[0,:,:]]), c)
             h = tf.nn.dropout(h, self.krH)
             
             h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
@@ -261,7 +276,6 @@ class RNN(object):
             c = tf.gather(H, t[0,:,0])
             
             h = self.f_h_top(tf.concat(1, [self.m, p[0,:,:], x[0,:,:], c]))
-            # h = self.f_h_top(tf.concat(1, [self.m, p[0,:,:], x[0,:,:]]), c)
             h = tf.nn.dropout(h, self.krR)
             
             h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
@@ -273,6 +287,8 @@ class RNN(object):
         return
     
     def get_output_unit(self, name):
+        """ Create a unit to compute the class scores of a node
+        """
         self.W[name] = {}
         self.b[name] = {}
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
@@ -290,6 +306,8 @@ class RNN(object):
         return output_unit
     
     def create_output(self):
+        """ Construct the output layer
+        """
         self.f_o = self.get_output_unit("output")
         
         self.O = self.f_o(self.H)
@@ -303,14 +321,137 @@ class RNN(object):
         return
     
     def create_update_op(self):
+        """ Create the computation of back-propagation
+        """
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate, epsilon=self.epsilon)
         self.update_op = optimizer.minimize(self.loss)
         return
     
-    def train(self, root_list):
-        """ Train on a single tree
+    def get_padded_word(self, word):
+        """ Preprocessing: Form a uniform-length string from a raw word string 
+        
+        Mainly to enable batch CNN.
+        A word W is cut and transformed into start, W_cut, end, padding.
+        Special characters: -1: start, -2: end, -3: padding.
         """
-        e, y, T, p, x, w, S, _, l = conll_utils.get_batch_input(root_list, self.degree)
+        word_cut = [-1] + word[:self.word_length-2] + [-2]
+        padding = [-3] * (self.word_length - len(word_cut))
+        return word_cut + padding
+
+    def get_formatted_input(self, tree):
+        """ Preprocessing: Extract data structures from an input tree
+        
+        The argument "tree" is actually a root node
+        """
+        # Get BFS layers
+        layer_list = []
+        layer = [tree]
+        while layer:
+            layer_list.append(layer)
+            child_layer = []
+            for node in layer:
+                child_layer.extend(node.child_list)
+            layer = child_layer
+        
+        # Index nodes bottom-up
+        index = -1
+        for layer in reversed(layer_list):
+            for node in layer:
+                index += 1
+                node.index = index
+        
+        # Extract data from layers bottom-up
+        N = []
+        e = []
+        y = []
+        T = []
+        p = []
+        x = []
+        w = []
+        S = []
+        l = 0
+        for layer in reversed(layer_list):
+            for node in layer:
+                N.append(node)
+                
+                e.append(1)
+                
+                y.append(node.y)
+                
+                child_index_list = [child.index for child in node.child_list]
+                T.append(child_index_list
+                         + [-1] * (self.degree-len(node.child_list))
+                         + [node.left.index if node.left else -1,
+                            node.right.index if node.right else -1,
+                            node.parent.index if node.parent else -1])
+                
+                p.append([node.pos_index,
+                          node.left.pos_index if node.left else -1,
+                          node.right.pos_index if node.right else -1])
+                
+                x.append([node.word_index,
+                          node.head_index,
+                          node.left.head_index if node.left else -1,
+                          node.right.head_index if node.right else -1])
+                
+                w.append([self.get_padded_word(node.word_split),
+                          self.get_padded_word(node.head_split),
+                          self.get_padded_word(node.left.head_split if node.left else []),
+                          self.get_padded_word(node.right.head_split if node.right else [])])
+                
+                S.append([node.index,
+                          node.left.index if node.left else -1,
+                          node.right.index if node.right else -1])
+                
+                if node.word_index != -1: l += 1
+        N = np.array(N)
+        e = np.array(e, dtype=np.float32)
+        y = np.array(y, dtype=np.int32)
+        T = np.array(T, dtype=np.int32)
+        p = np.array(p, dtype=np.int32)
+        x = np.array(x, dtype=np.int32)
+        w = np.array(w, dtype=np.int32)
+        S = np.array(S, dtype=np.int32)
+        return N, e, y, T, p, x, w, S, l, tree.index
+            
+    def get_batch_input(self, tree_list):
+        """ Preprocessing: Get batched data structures for the input layer from input trees
+        """
+        input_list = []
+        for tree in tree_list:
+            input_list.append(self.get_formatted_input(tree))
+        
+        samples = len(input_list)
+        nodes = max([i[1].shape[0] for i in input_list])
+        N =      np.zeros([nodes, samples                              ], dtype=np.object)
+        e =      np.zeros([nodes, samples                              ], dtype=np.float32)
+        y = -1 * np.ones( [nodes, samples                              ], dtype=np.int32)
+        T = -1 * np.ones( [nodes, samples, self.degree+3               ], dtype=np.int32)
+        p = -1 * np.ones( [nodes, samples, self.poses                  ], dtype=np.int32)
+        x = -1 * np.ones( [nodes, samples, self.words                  ], dtype=np.int32)
+        w = -3 * np.ones( [nodes, samples, self.words, self.word_length], dtype=np.int32)
+        S = -1 * np.ones( [nodes, samples, self.neighbors              ], dtype=np.int32)
+        l =      np.zeros(        samples                               , dtype=np.float32)
+        r =      np.zeros(        samples                               , dtype=np.int32)
+        
+        for sample, sample_input in enumerate(input_list):
+            n = sample_input[0].shape[0]
+            (N[:n, sample      ],
+             e[:n, sample      ],
+             y[:n, sample      ],
+             T[:n, sample, :   ],
+             p[:n, sample, :   ],
+             x[:n, sample, :   ],
+             w[:n, sample, :, :],
+             S[:n, sample, :   ],
+             l[    sample      ],
+             r[    sample      ]) = sample_input
+        return N, e, y, T, p, x, w, S, l, r
+        
+    def train(self, tree_list):
+        """ Update parameters from a batch of trees with labeled nodes
+        """
+        _, e, y, T, p, x, w, S, l, _ = self.get_batch_input(tree_list)
         
         loss, _ = self.sess.run([self.loss, self.update_op],
                     feed_dict={self.e: e, self.y: y, self.T: T,
@@ -320,8 +461,12 @@ class RNN(object):
                                self.krH: self.keep_rate_H, self.krR: self.keep_rate_R})
         return loss
     
-    def evaluate(self, root_list, chunk_ne_dict_list, ne_list):
-        e, y, T, p, x, w, S, chunk_list, l = conll_utils.get_batch_input(root_list, self.degree)
+    def predict(self, tree_list):
+        """ Predict positive spans and their labels from a batch of trees
+        
+        Spans that are contained by other positive spans are ignored.
+        """
+        N, _, _, T, p, x, w, S, l, r = self.get_batch_input(tree_list)
         
         y_hat = self.sess.run(self.y_hat,
                     feed_dict={self.T: T, 
@@ -330,41 +475,26 @@ class RNN(object):
                                self.krP: 1.0, self.krX: 1.0,
                                self.krH: 1.0, self.krR: 1.0})
         
-        reals = 0.
-        positives = 0.
-        true_postives = 0.
-        for sample in range(y.shape[1]): 
-            chunk_y_dict = defaultdict(lambda: [0]*(self.output_dimension-1))
-            for node, label in enumerate(y_hat[:,sample]):
-                if e[node][sample] == 0: continue
-                if label == self.output_dimension - 1: continue
-                chunk_y_dict[chunk_list[sample][node]][label] += 1
-                
-            reals += len(chunk_ne_dict_list[sample])
-            positives += len(chunk_y_dict)
-            for chunk in chunk_y_dict.iterkeys():
-                if chunk not in chunk_ne_dict_list[sample]: continue
-                if chunk_ne_dict_list[sample][chunk] == ne_list[np.argmax(chunk_y_dict[chunk])]:
-                    true_postives += 1
+        def parse_output(node_index, sample_index, span_y):
+            node = N[node_index][sample_index]
+            label = y_hat[node_index][sample_index]
+            
+            if label != self.output_dimension-1:
+                span_y[node.span] = label
+                return
+            
+            for child in node.child_list:
+                parse_output(child.index, sample_index, span_y)
+            return
         
-        return true_postives, positives, reals
-    
-    def predict(self, root_node):
-        _, y, T, p, x, w, S, chunk_list, l = conll_utils.get_batch_input([root_node], self.degree)
+        tree_span_y = []
+        for sample_index in xrange(T.shape[1]): 
+            span_y = {}
+            parse_output(r[sample_index], sample_index, span_y)
+            tree_span_y.append(span_y)
         
-        y_hat = self.sess.run(self.y_hat,
-                    feed_dict={self.T: T, 
-                               self.p: p, self.x: x, self.w: w,
-                               self.S: S, self.l: l,
-                               self.krP: 1.0, self.krX: 1.0,
-                               self.krH: 1.0, self.krR: 1.0})
-        
-        y, y_hat = y[:,0], y_hat[:,0]
-        confusion_matrix = np.zeros([19, 19], dtype=np.int32)
-        for node in range(y.shape[0]):
-            confusion_matrix[y[node]][y_hat[node]] += 1
-        return confusion_matrix
-        
+        return tree_span_y
+       
 def main():
     config = Config()
     model = RNN(config)

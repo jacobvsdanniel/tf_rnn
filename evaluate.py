@@ -1,75 +1,163 @@
 import os
 import sys
 import time
-import math
 import random
 import argparse
-from collections import defaultdict
 
 import numpy as np
 import tensorflow as tf
 
-import tf_rnn
-import conll_utils
+import rnn
 
 batch_nodes = 1000
 batch_trees = 16
 patience = 3
 max_epoches = 30
 
-def read_glove_embedding(model, word_to_index):
-    # Read glove embeddings
-    glove_word_array = np.load("../tf_rnn/glove_word.npy")
-    glove_embedding_array = np.load("../tf_rnn/glove_embedding.npy")
-    glove_word_to_index = {word: i for i, word in enumerate(glove_word_array)}
+def load_embedding(model, word_list, dataset):
+    """ Load pre-trained word embeddings into the dictionary of model
     
-    # Initialize word embeddings to glove
+    word.npy: an array of pre-trained words
+    embedding.npy: a 2d array of pre-trained word vectors
+    word_list: a list of words in the dictionary of model
+    """
+    # load pre-trained word embeddings from file
+    word_array = np.load(os.path.join(dataset, "word.npy"))
+    embedding_array = np.load(os.path.join(dataset, "embedding.npy"))
+    word_to_embedding = {}
+    for i, word in enumerate(word_array):
+        word_to_embedding[word] = embedding_array[i]
+    
+    # Store pre-trained word embeddings into the dictionary of model
     L = model.sess.run(model.L)
-    for word, index in word_to_index.iteritems():
-        if word in glove_word_to_index:
-            L[index] = glove_embedding_array[glove_word_to_index[word]]
-            
-    # Normalize word embeddings
-    # for i in range(L.shape[0]):
-        # L[i] = L[i] / np.linalg.norm(L[i]) * 5
-            
+    for index, word in enumerate(word_list):
+        if word in word_to_embedding:
+            L[index] = word_to_embedding[word]
     model.sess.run(model.L.assign(L))
     return
     
-def read_collobert_embedding(model, word_to_index):
-    # Read glove embeddings
-    word_array = np.load("collobert_word.npy")
-    embedding_array = np.load("collobert_embedding.npy")
-    collobert_to_index = {word: i for i, word in enumerate(word_array)}
+def load_data_and_initialize_model(dataset, split_list=["train", "validate", "test"],
+        use_pretrained_embedding=True):
+    """ Get tree data and initialize a model
     
-    # Initialize word embeddings to glove
-    L = model.sess.run(model.L)
-    for word, index in word_to_index.iteritems():
-        if word in collobert_to_index:
-            L[index] = embedding_array[collobert_to_index[word]]
-    model.sess.run(model.L.assign(L))
-    return
+    data: a dictionary; key-value example: "train"-(tree_list, ner_list)
+    ner_list: a list of dictionaries; key-value example: (3,5)-"PERSON"
+    ne_list: a list of distinct string labels, e.g. "PERSON"
+    """
+    # Select the implementation of loading data according to dataset
+    if dataset == "ontonotes":
+        import ontonotes as data_utils
     
-def train():
-    # Read data
-    data, degree, word_to_index, labels, pos_dimension, characters, ne_list = (
-        conll_utils.read_conll_dataset())
-
-    # Initialize model
-    config = tf_rnn.Config()
-    config.alphabet_size = characters
-    config.pos_dimension = pos_dimension
-    config.vocabulary_size = len(word_to_index)
-    config.output_dimension = labels
-    config.degree = degree
-    model = tf_rnn.RNN(config)
+    # Load data and determine dataset related hyperparameters
+    config = rnn.Config()
+    (data, word_list, ne_list,
+        config.alphabet_size, config.pos_dimension, config.output_dimension
+        ) = data_utils.read_dataset(split_list)
+    config.vocabulary_size = len(word_list)
+    
+    # Initialize a model
+    model = rnn.RNN(config)
     model.sess = tf.Session()
     model.sess.run(tf.initialize_all_variables())
-    read_glove_embedding(model, word_to_index)
-    # read_collobert_embedding(model, word_to_index)
+    if use_pretrained_embedding: load_embedding(model, word_list, dataset)
+    return data, ne_list, model
+
+def make_batch_list(tree_list):
+    """ Create a list of batches of trees
     
-    # Train
+    The trees in the same batch have similar numbers of nodes, so later padding can be minimized.
+    """
+    index_tree_list = sorted(enumerate(tree_list), key=lambda x: x[1].nodes)
+    
+    batch_list = []
+    batch = []
+    for index, tree in index_tree_list:
+        if len(batch)+1>batch_trees or (len(batch)+1)*tree.nodes>batch_nodes:
+            batch_list.append(batch)
+            batch = []
+        batch.append((index, tree))
+    batch_list.append(batch)
+    
+    random.shuffle(batch_list)
+    return batch_list
+    
+def train_an_epoch(model, tree_list):
+    """ Update model parameters for every tree once
+    """
+    batch_list = make_batch_list(tree_list)
+    
+    total_trees = len(tree_list)
+    trees = 0
+    loss = 0.
+    for i, batch in enumerate(batch_list):
+        _, tree_list = zip(*batch)
+        loss += model.train(tree_list)
+        trees += len(batch)
+        sys.stdout.write("\r(%5d/%5d) average loss %.3f   " % (trees, total_trees, loss/trees))
+        sys.stdout.flush()
+    
+    sys.stdout.write("\r" + " "*64 + "\r")
+    return loss / total_trees
+
+def predict_dataset(model, tree_list, ne_list):
+    """ Get dictionarues of predicted positive spans and their labels for every tree
+    """
+    batch_list = make_batch_list(tree_list)
+    
+    ner_list = [None] * len(tree_list)
+    for batch in batch_list:
+        index_list, tree_list = zip(*batch)
+        for i, span_y in enumerate(model.predict(tree_list)):
+            ner_list[index_list[i]] = {span: ne_list[y] for span, y in span_y.iteritems()}
+    return ner_list
+    
+def evaluate_prediction(ner_list, ner_hat_list):
+    """ Compute the score of the prediction of trees
+    """
+    reals = 0.
+    positives = 0.
+    true_positives = 0.
+    for index, ner in enumerate(ner_list):
+        ner_hat = ner_hat_list[index]
+        reals += len(ner)
+        positives += len(ner_hat)
+        for span in ner_hat.iterkeys():
+            if span not in ner: continue
+            if ner[span] == ner_hat[span]:
+                true_positives += 1
+    
+    try:
+        precision = true_positives / positives
+    except ZeroDivisionError:
+        precision = 1.
+    
+    try:
+        recall = true_positives / reals
+    except ZeroDivisionError:
+        recall = 1.
+    
+    try:
+        f1 = 2*precision*recall / (precision + recall)
+    except ZeroDivisionError:
+        f1 = 0.
+    
+    return precision*100, recall*100, f1*100
+    
+def train_model(dataset):
+    """ Update model parameters until it converges or reaches maximum epochs
+    """
+    if os.path.isfile("keep_training.model"):
+        load_existing_model = True
+    else:
+        load_existing_model = False
+        
+    data, ne_list, model = load_data_and_initialize_model(dataset,
+        use_pretrained_embedding=not load_existing_model)
+    
     saver = tf.train.Saver()
+    if load_existing_model:
+        saver.restore(model.sess, "keep_training.model")
+    
     best_epoch = 0
     best_score = (-1, -1, -1)
     best_loss = float("inf")
@@ -77,11 +165,12 @@ def train():
         print "\n<Epoch %d>" % epoch
         
         start_time = time.time()
-        loss = train_dataset(model, data["train"])
+        loss = train_an_epoch(model, data["train"][0])
         print "[train] average loss %.3f; elapsed %.0fs" % (loss, time.time() - start_time)
         
-        score = evaluate_dataset(model, data["development"], ne_list)
-        print "[validation] precision=%.1f%% recall=%.1f%% f1=%.3f%%" % score,
+        ner_hat_list = predict_dataset(model, data["validate"][0], ne_list)
+        score = evaluate_prediction(data["validate"][1], ner_hat_list)
+        print "[validate] precision=%.1f%% recall=%.1f%% f1=%.3f%%" % score,
         
         if best_score[2] < score[2]:
             print "best"
@@ -94,221 +183,46 @@ def train():
     
     print "\n<Best Epoch %d>" % best_epoch
     print "[train] average loss %.3f" % best_loss
-    print "[validation] precision=%.1f%% recall=%.1f%% f1=%.3f%%" % best_score
+    print "[validate] precision=%.1f%% recall=%.1f%% f1=%.3f%%" % best_score
     saver.restore(model.sess, "tmp.model")
-    score = evaluate_dataset(model, data["test"], ne_list)
+    ner_hat_list = predict_dataset(model, data["test"][0], ne_list)
+    score = evaluate_prediction(data["test"][1], ner_hat_list)
     print "[test] precision=%.1f%% recall=%.1f%% f1=%.3f%%" % score
-   
-def make_tree_batch(tree_list):
-    tree_list = sorted(tree_list, key=lambda tree: tree.nodes)
-    
-    batch_list = []
-    batch = []
-    for tree in tree_list:
-        if len(batch)>=batch_trees or (len(batch)+1)*tree.nodes>batch_nodes:
-            batch_list.append(batch)
-            batch = []
-        batch.append(tree)
-    batch_list.append(batch)
-    
-    random.shuffle(batch_list)
-    return batch_list
+    return
 
-def make_tree_ner_batch(tree_list, ner_list):
-    data = zip(tree_list, ner_list)
-    data = sorted(data, key=lambda x: x[0].nodes)
-    
-    batch_list = []
-    batch = []
-    for tree, ner in data:
-        if len(batch)>=batch_trees or (len(batch)+1)*tree.nodes>batch_nodes:
-            batch_list.append(batch)
-            batch = []
-        batch.append((tree, ner))
-    batch_list.append(batch)
-    
-    return batch_list
-    
-def train_dataset(model, data):
-    tree_list, _, _, _ = data
-    batch_list = make_tree_batch(tree_list)
-    # print "batches:", len(batch_list)
-    
-    total_trees = sum(len(batch) for batch in batch_list)
-    trees = 0
-    total_loss = 0.
-    for i, batch in enumerate(batch_list):
-        loss = model.train(batch)
-        total_loss += loss
-        
-        trees += len(batch)
-        sys.stdout.write("\r(%5d/%5d) average loss %.3f   " % (trees, total_trees, total_loss/trees))
-        sys.stdout.flush()
-    sys.stdout.write("\r" + " "*64 + "\r")
-    return total_loss / total_trees
-
-def evaluate_dataset(model, data, ne_list):
-    tree_list, _, _, ner_list = data
-    batch_list = make_tree_ner_batch(tree_list, ner_list)
-    # print "batches:", len(batch_list)
-    
-    total_true_postives = 0.
-    total_postives = 0.
-    total_reals = 0.
-    for batch in batch_list:
-        tree_list, ner_list = zip(*batch)
-        true_postives, postives, reals = model.evaluate(tree_list, ner_list, ne_list)
-        total_true_postives += true_postives
-        total_postives += postives
-        total_reals += reals
-    print "true_postives", total_true_postives
-    print "positives", total_postives
-    print "reals", total_reals
-    
-    try:
-        precision = total_true_postives / total_postives
-    except ZeroDivisionError:
-        precision = 1.
-    recall = total_true_postives / total_reals
-    f1 = 2*precision*recall / (precision + recall)
-    return precision*100, recall*100, f1*100
-    
-def evaluate_confusion(model, data):
-    tree_list, _, _, _ = data
-    
-    confusion_matrix = np.zeros([19, 19], dtype=np.int32)
-    for tree in tree_list:
-        confusion_matrix += model.predict(tree)
-        
-    return confusion_matrix
-
-def validate(split):
-    # Read data
-    data, degree, word_to_index, labels, pos_dimension, characters, ne_list = (
-        conll_utils.read_conll_dataset(data_split_list=[split]))
-
-    # Initialize model
-    config = tf_rnn.Config()
-    config.alphabet_size = characters
-    config.pos_dimension = pos_dimension
-    config.vocabulary_size = len(word_to_index)
-    config.output_dimension = labels
-    config.degree = degree
-    model = tf_rnn.RNN(config)
-    model.sess = tf.Session()
-    model.sess.run(tf.initialize_all_variables())
+def evaluate_model(dataset, split):
+    """ Compute the scores of an existing model
+    """
+    data, ne_list, model = load_data_and_initialize_model(dataset, split_list=[split])
     
     saver = tf.train.Saver()
-    
-    # TMP
-    # for split in ["train", "development", "test"]:
-        # saver.restore(model.sess, "tmp.model")
-        # score = evaluate_dataset(model, data[split], ne_list)
-        # print "[%s]" % split + " precision=%.1f%% recall=%.1f%% f1=%.1f%%" % score
-    # for i, j in tmp_dict.iteritems():
-        # print i, j
-    # print len(tmp_dict)
-    # return
-    
     saver.restore(model.sess, "tmp.model")
-    score = evaluate_dataset(model, data[split], ne_list)
+    ner_hat_list = predict_dataset(model, data[split][0], ne_list)
+    score = evaluate_prediction(data[split][1], ner_hat_list)
     print "[%s]" % split + " precision=%.1f%% recall=%.1f%% f1=%.3f%%" % score
-    return
-    confusion_matrix = evaluate_confusion(model, data[split])
-    
-    ne_list.append("NONE")
-    print " "*13,
-    for ne in ne_list:
-        print "%4s" % ne[:4],
-    print ""
-    for i in range(19):
-        print "%12s" % ne_list[i],
-        for j in range(19):
-            if confusion_matrix[i][j]:
-                print "%4d" % confusion_matrix[i][j],
-            else:
-                print "   .",
-        print ""
-    return
-
-def interpolate_embedding():
-    # Read data
-    data, degree, word_to_index, labels, pos_dimension, characters, ne_list = (
-        conll_utils.read_conll_dataset())
-
-    # Initialize model
-    config = tf_rnn.Config()
-    config.alphabet_size = characters
-    config.pos_dimension = pos_dimension
-    config.vocabulary_size = len(word_to_index)
-    config.output_dimension = labels
-    config.degree = degree
-    model = tf_rnn.RNN(config)
-    model.sess = tf.Session()
-    model.sess.run(tf.initialize_all_variables())
-    
-    # Read glove embeddings
-    glove_word_array = np.load("glove_word.npy")
-    glove_embedding_array = np.load("glove_embedding.npy")
-    glove_word_to_index = {word: i for i, word in enumerate(glove_word_array)}
-    
-    # Get glove embeddings
-    L1 = model.sess.run(model.L)
-    for word, index in word_to_index.iteritems():
-        if word in glove_word_to_index:
-            L1[index] = glove_embedding_array[glove_word_to_index[word]]
-    
-    # Get tuned embeddings
-    saver = tf.train.Saver()
-    saver.restore(model.sess, "tmp.model")
-    L2 = model.sess.run(model.L)
-    
-    diff = np.any(L1!=L2, axis=1)
-    print "Tuned words: %d" % np.sum(diff)
-    same = np.all(L1==L2, axis=1)
-    print "Un-tuned words: %d" % np.sum(same)
-    
-    print "Interpolating un-tuned embeddings..."
-    start_time = time.time()
-    L3 = np.copy(L2)
-    for i in range(len(word_to_index)):
-        if i%100==0 or i==len(word_to_index)-1:
-            sys.stdout.write("%d\r" % i)
-            sys.stdout.flush()
-        if diff[i]: continue
-        
-        distance = np.linalg.norm(L1[i]-L1, axis=1)
-        neighbor_index = np.argsort(distance)[1:11]
-        
-        distance = np.array([distance[j] for j in neighbor_index])
-        distance_product = np.multiply.reduce(distance)
-        normalizer = distance_product / np.sum(distance_product/distance)
-        
-        neighbor_embedding = L2[neighbor_index]
-        L3[i] = normalizer * np.sum(neighbor_embedding / distance.reshape((10,1)), axis=0)
-    print " elapsed %.0fs" % (time.time()-start_time)
-    model.sess.run(model.L.assign(L3))
-    saver.save(model.sess, "tmp2.model")
     return
     
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-m", dest="mode", default="train",
-        choices=["train", "validate", "interpolate"])
-    parser.add_argument("-s", dest="split", default="development",
-        choices=["train", "development", "test"])
+        choices=["train", "evaluate"])
+    parser.add_argument("-s", dest="split", default="validate",
+        choices=["train", "validate", "test"])
+    parser.add_argument("-d", dest="dataset", default="ontonotes",
+        choices=["ontonotes"])
     arg = parser.parse_args()
     
     if arg.mode == "train":
-        train()
-    elif arg.mode == "validate":
-        validate(arg.split)
-    elif arg.mode == "interpolate":
-        interpolate_embedding()
+        train_model(arg.dataset)
+    elif arg.mode == "evaluate":
+        evaluate_model(arg.dataset, arg.split)
     return
     
 if __name__ == "__main__":
     main()
 
+    
+    
+    
     
     
