@@ -22,7 +22,7 @@ pretrained_embedding_file = os.path.join(dataset, "embedding.npy")
 
 data_path_prefix = "/home/danniel/Desktop/CONLL2012-intern/conll-2012/v4/data"
 test_auto_data_path_prefix = "/home/danniel/Downloads/wu_conll_test/v9/data"
-data_path_suffix = "data/chinese/annotations/bc/cnn"
+data_path_suffix = "data/chinese/annotations"
     
 glove_file = "/home/danniel/Downloads/glove.840B.300d.txt"
 
