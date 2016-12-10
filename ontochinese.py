@@ -12,7 +12,7 @@ from pstree import PSTree
 
 from rnn import Node
 
-dataset = "ontonotes"
+dataset = "ontochinese"
 character_file = os.path.join(dataset, "character.txt")
 word_file = os.path.join(dataset, "word.txt")
 pos_file = os.path.join(dataset, "pos.txt")
@@ -22,7 +22,7 @@ pretrained_embedding_file = os.path.join(dataset, "embedding.npy")
 
 data_path_prefix = "/home/danniel/Desktop/CONLL2012-intern/conll-2012/v4/data"
 test_auto_data_path_prefix = "/home/danniel/Downloads/wu_conll_test/v9/data"
-data_path_suffix = "data/english/annotations"
+data_path_suffix = "data/chinese/annotations/bc/cnn"
     
 glove_file = "/home/danniel/Downloads/glove.840B.300d.txt"
 
@@ -298,8 +298,8 @@ def read_dataset(data_split_list = ["train", "validate", "test"]):
             len(character_to_index), len(pos_to_index), len(ne_to_index))
 
 if __name__ == "__main__":
-    extract_vocabulary_and_alphabet()
-    extract_glove_embeddings()
+    #extract_vocabulary_and_alphabet()
+    #extract_glove_embeddings()
     read_dataset()
     exit()
     

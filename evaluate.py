@@ -47,6 +47,8 @@ def load_data_and_initialize_model(dataset, split_list=["train", "validate", "te
     # Select the implementation of loading data according to dataset
     if dataset == "ontonotes":
         import ontonotes as data_utils
+    elif dataset == "ontochinese":
+        import ontochinese as data_utils
     
     # Load data and determine dataset related hyperparameters
     config = rnn.Config()
@@ -209,7 +211,7 @@ def main():
     parser.add_argument("-s", dest="split", default="validate",
         choices=["train", "validate", "test"])
     parser.add_argument("-d", dest="dataset", default="ontonotes",
-        choices=["ontonotes"])
+        choices=["ontonotes", "ontochinese"])
     arg = parser.parse_args()
     
     if arg.mode == "train":
