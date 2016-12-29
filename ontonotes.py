@@ -22,7 +22,7 @@ pretrained_embedding_file = os.path.join(dataset, "embedding.npy")
 
 data_path_prefix = "/home/danniel/Desktop/CONLL2012-intern/conll-2012/v4/data"
 test_auto_data_path_prefix = "/home/danniel/Downloads/wu_conll_test/v9/data"
-data_path_suffix = "data/english/annotations"
+data_path_suffix = "data/english/annotations/bc"
     
 glove_file = "/home/danniel/Downloads/glove.840B.300d.txt"
 
@@ -97,7 +97,8 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
     word = tree.word
     span = tree.span
     head = tree.head if hasattr(tree, "head") else head_raw_data[(span, pos)][1]
-    ne = ner_raw_data[span] if span in ner_raw_data else "NONE"
+    # ne = ner_raw_data[span] if span in ner_raw_data else "NONE"
+    ne = ner_raw_data.pop(span, "NONE")
     
     # Process pos info
     node.pos = pos
@@ -163,26 +164,41 @@ def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index):
     ne_count = defaultdict(lambda: 0)
     pos_ne_count = defaultdict(lambda: 0)
     
-    for document in raw_data["auto"]:
-        for part in raw_data["auto"][document]:
+    for document in raw_data["gold"]:
+        for part in raw_data["gold"][document]:
             
             ner_raw_data = defaultdict(lambda: {})
             for k, v in raw_data["gold"][document][part]["ner"].iteritems():
                 ner_raw_data[k[0]][(k[1], k[2])] = v
             
-            for index, parse in enumerate(raw_data["auto"][document][part]["parses"]):
-                text_raw_data = raw_data["auto"][document][part]["text"][index]
+            for index, parse in enumerate(raw_data["gold"][document][part]["parses"]):
+                text_raw_data = raw_data["gold"][document][part]["text"][index]
                 word_count += len(text_raw_data)
                 
                 if parse.subtrees[0].label == "NOPARSE": continue
-                head_raw_data = raw_data["auto"][document][part]["heads"][index]
+                head_raw_data = raw_data["gold"][document][part]["heads"][index]
+                
+                
+                ner = ner_raw_data[index].copy()
+                
                 
                 root_node = Node()
                 nodes = construct_node(
-                   root_node, parse, ner_raw_data[index], head_raw_data, text_raw_data,
+                   root_node, parse, ner, head_raw_data, text_raw_data,
                    character_to_index, word_to_index, pos_to_index,
                    pos_count, ne_count, pos_ne_count)
                 root_node.nodes = nodes
+                
+                
+                for span, ne in ner.iteritems():
+                    if (ne not in ["DATE", "TIME", "PERCENT", "MONEY", "QUANTITY", "ORDINAL", "CARDINAL"]
+                        and span[1]-span[0]<=2):
+                        print " ".join(text_raw_data)
+                        print document, part
+                        print parse
+                        print ner
+                        tmp = raw_input()
+                
                 
                 tree_list.append(root_node)
                 ner_list.append(ner_raw_data[index])
@@ -298,8 +314,8 @@ def read_dataset(data_split_list = ["train", "validate", "test"]):
             len(character_to_index), len(pos_to_index), len(ne_to_index))
 
 if __name__ == "__main__":
-    extract_vocabulary_and_alphabet()
-    extract_glove_embeddings()
+    # extract_vocabulary_and_alphabet()
+    # extract_glove_embeddings()
     read_dataset()
     exit()
     

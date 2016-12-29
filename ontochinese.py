@@ -5,6 +5,7 @@ import codecs
 from collections import defaultdict
 
 import numpy as np
+import mafan
 
 sys.path.append("/home/danniel/Desktop/CONLL2012-intern")
 from load_conll import load_data
@@ -24,7 +25,7 @@ data_path_prefix = "/home/danniel/Desktop/CONLL2012-intern/conll-2012/v4/data"
 test_auto_data_path_prefix = "/home/danniel/Downloads/wu_conll_test/v9/data"
 data_path_suffix = "data/chinese/annotations"
     
-glove_file = "/home/danniel/Downloads/glove.840B.300d.txt"
+glove_file = "/home/danniel/Downloads/Glove_CNA_ASBC_300d.vec"
 
 def log(msg):
     sys.stdout.write(msg)
@@ -75,10 +76,10 @@ def extract_glove_embeddings():
     _, word_to_index = read_list_file(word_file)
     word_list = []
     embedding_list = []
-    with open(glove_file, "r") as f:
+    with codecs.open(glove_file, "r", encoding="utf8") as f:
         for line in f:
             line = line.strip().split()
-            word = line[0]
+            word = mafan.simplify(line[0])
             if word not in word_to_index: continue
             embedding = np.array([float(i) for i in line[1:]])
             word_list.append(word)
