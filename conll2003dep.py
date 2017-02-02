@@ -123,14 +123,6 @@ def extract_pos_from_tree(tree, pos_set):
         extract_pos_from_tree(child, pos_set)
     return
 
-def print_pstree(node, indent):
-    word = node.word if node.word else ""
-    print indent + node.label + " "+ word
-    
-    for child in node.subtrees:
-        print_pstree(child, indent+"    ")
-    return
-
 def prepare_dataset():
     ne_set = set()
     word_set = set()
@@ -206,17 +198,16 @@ def extract_glove_embeddings():
     log(" %d pre-trained words\n" % len(word_list))
     return
 
-def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
+def construct_node(node, ner_raw_data, text_raw_data,
                     character_to_index, word_to_index, pos_to_index,
                     pos_count, ne_count, pos_ne_count):
-    pos = tree.label
-    word = tree.word
-    span = tree.span
-    head = tree.head if hasattr(tree, "head") else head_raw_data[(span, pos)][1]
+    pos = node.pos
+    word = node.word
+    head = node.head
+    span = node.span
     ne = ner_raw_data[span] if span in ner_raw_data else "NONE"
     
     # Process pos info
-    node.pos = pos
     node.pos_index = pos_to_index[pos]
     pos_count[pos] += 1
     
@@ -226,7 +217,6 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
     
     # Process head info
     node.head_split = [character_to_index[character] for character in head]
-    #if head == "-LSB-": print text_raw_data
     node.head_index = word_to_index[head]
     
     # Process ne info
@@ -236,32 +226,10 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
     if ne != "NONE":
         pos_ne_count[pos] += 1
     
-    # Process span info
-    node.span = span
-    
-    # Binarize children
-    if len(tree.subtrees) > 2:
-        side_child_pos = tree.subtrees[-1].label
-        side_child_span = tree.subtrees[-1].span
-        side_child_head = head_raw_data[(side_child_span, side_child_pos)][1]
-        if side_child_head != head:
-            sub_subtrees = tree.subtrees[:-1]
-        else:
-            sub_subtrees = tree.subtrees[1:]
-        new_span = (sub_subtrees[0].span[0], sub_subtrees[-1].span[1])
-        new_tree = pstree.PSTree(label=pos, span=new_span, subtrees=sub_subtrees)
-        new_tree.head = head
-        if side_child_head != head:
-            tree.subtrees = [new_tree, tree.subtrees[-1]]
-        else:
-            tree.subtrees = [tree.subtrees[0], new_tree]
-         
     # Process children
     nodes = 1
-    for subtree in tree.subtrees:
-        child = Node()
-        node.add_child(child)
-        child_nodes = construct_node(child, subtree, ner_raw_data, head_raw_data, text_raw_data,
+    for child in node.child_list:
+        child_nodes = construct_node(child, ner_raw_data, text_raw_data,
             character_to_index, word_to_index, pos_to_index,
             pos_count, ne_count, pos_ne_count)
         nodes += child_nodes
@@ -292,17 +260,13 @@ def get_tree_data(sentence_list, parse_list, ner_list,
         text_raw_data = sentence_list[index]
         word_count += len(text_raw_data)
         
-        if parse.subtrees[0].label == "NOPARSE": continue
-        head_raw_data = head_finder.collins_find_heads(parse)
-        
-        root_node = Node()
         nodes = construct_node(
-           root_node, parse, ner_list[index], head_raw_data, text_raw_data,
+           parse, ner_list[index], text_raw_data,
            character_to_index, word_to_index, pos_to_index,
            pos_count, ne_count, pos_ne_count)
-        root_node.nodes = nodes
+        parse.nodes = nodes
                 
-        tree_list.append(root_node)
+        tree_list.append(parse)
                 
     log(" %d sentences\n" % len(tree_list))
     return tree_list, word_count, pos_count, ne_count, pos_ne_count
@@ -315,11 +279,11 @@ def read_dataset(data_split_list = ["train", "validate", "test"]):
     for split in data_split_list:
         sentence_data[split], ner_data[split] = extract_ner(split)
         
-        split_parse_file = os.path.join(dataset, split_parse[split])
-        with open(split_parse_file, "r") as f:
-            line_list = f.read().splitlines()
-        parse_data[split] = [pstree.tree_from_text(line) for line in line_list]
-    
+        dependency_file = os.path.join(dataset, split_dependency[split])
+        dependency_parse_list = dependency_utils.read_conllu(dependency_file)
+        parse_data[split] = [dependency_utils.dependency_to_constituency(*parse)
+            for parse in dependency_parse_list]
+        
     # Read lists of annotations
     character_list, character_to_index = read_list_file(character_file)
     word_list, word_to_index = read_list_file(word_file)
@@ -402,17 +366,9 @@ def read_dataset(data_split_list = ["train", "validate", "test"]):
             len(character_to_index), len(pos_to_index), len(ne_to_index))
 
 if __name__ == "__main__":
-    prepare_dataset()
-    """
-    print ""
-    parse_string = "(ROOT (S (NP (NNP EU)) (VP (VBZ rejects) (NP (JJ German) (NN call)) (PP (TO to) (NP (NN boycott) (JJ British) (NN lamb)))) (. .)))"
-    root = pstree.tree_from_text(parse_string)
-    print_pstree(root, "")
-    print ""
-    for i, j in head_finder.collins_find_heads(root).iteritems(): print i, j
-    """
+    #prepare_dataset()
     #extract_glove_embeddings()
-    #read_dataset()
+    read_dataset()
     exit()
     
     
