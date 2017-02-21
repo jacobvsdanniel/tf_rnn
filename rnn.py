@@ -106,7 +106,7 @@ class RNN(object):
                 [self.vocabulary_size, self.word_to_word_embeddings])
             # self.C = tf.get_variable("C",
                 # [2+self.alphabet_size, self.character_embeddings])
-        self.L_hat = tf.concat(0, [tf.zeros([1, self.word_to_word_embeddings]), self.L])
+        self.L_hat = tf.concat(axis=0, values=[tf.zeros([1, self.word_to_word_embeddings]), self.L])
         # self.C_hat = tf.concat(0, [tf.zeros([1, self.character_embeddings]), self.C])
         
         # Compute indices of children and neighbors
@@ -144,10 +144,10 @@ class RNN(object):
             W_hat = []
             for window in xrange(1, self.max_conv_window+1):
                 W_window = tf.nn.conv2d(W, self.K[window], stride, "VALID")
-                W_window = tf.reduce_max(W_window, reduction_indices=[1, 2])
+                W_window = tf.reduce_max(W_window, axis=[1, 2])
                 W_hat.append(W_window)
             
-            W_hat = tf.concat(1, W_hat)
+            W_hat = tf.concat(axis=1, values=W_hat)
             return tf.nn.relu(W_hat)
         
         self.f_x_cnn = cnn
@@ -206,22 +206,22 @@ class RNN(object):
             w = tf.reshape(self.w, [self.nodes*self.samples*self.words, self.word_length])
             W = self.f_x_highway(self.f_x_cnn(w))
             X = tf.reshape(X, [self.nodes*self.samples*self.words, self.word_to_word_embeddings])
-            X = tf.concat(1, [X, W])
+            X = tf.concat(axis=1, values=[X, W])
         
         X = tf.reshape(X, [self.nodes, self.samples, self.words*self.word_dimension])
         self.X = tf.nn.dropout(X, self.krX)
         
         # Mean embedding of leaf words
         m = tf.slice(self.X, [0,0,0], [self.nodes, self.samples, self.word_dimension])
-        self.m = tf.reduce_sum(m, reduction_indices=0) / tf.reshape(self.l, [self.samples, 1])
+        self.m = tf.reduce_sum(m, axis=0) / tf.reshape(self.l, [self.samples, 1])
         return
     
-    def get_hidden_unit(self, name):
+    def get_hidden_unit(self, name, degree):
         """ Create a unit to compute the hidden features of one direction of a node
         """
         self.input_dimension = (self.pos_dimension * self.poses 
                               + self.word_dimension * (1+self.words)
-                              + self.hidden_dimension)
+                              + self.hidden_dimension * degree)
         self.W[name] = {}
         self.b[name] = {}
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
@@ -242,8 +242,8 @@ class RNN(object):
         self.W = {}
         self.b = {}
         self.a = {}
-        self.f_h_bottom = self.get_hidden_unit("hidden_bottom")
-        self.f_h_top = self.get_hidden_unit("hidden_top")
+        self.f_h_bottom = self.get_hidden_unit("hidden_bottom", self.degree)
+        self.f_h_top = self.get_hidden_unit("hidden_top", 1)
         
         H = tf.zeros([(1+self.nodes) * self.samples, self.hidden_dimension])
         
@@ -255,14 +255,15 @@ class RNN(object):
             x = tf.slice(self.X, [index,0,0], [1, self.samples, self.words*self.word_dimension])
             
             t = tf.slice(self.T_hat, [index,0,0], [1, self.samples, self.degree])
-            c = tf.reduce_sum(tf.gather(H, t[0,:,:]), reduction_indices=1)
+            #c = tf.reduce_sum(tf.gather(H, t[0,:,:]), axis=1)
+            c = tf.reshape(tf.gather(H, t[0,:,:]), [self.samples, self.degree*self.hidden_dimension])
             
-            h = self.f_h_bottom(tf.concat(1, [self.m, p[0,:,:], x[0,:,:], c]))
+            h = self.f_h_bottom(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], c]))
             h = tf.nn.dropout(h, self.krH)
             
             h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
             h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_dimension])
-            return index+1, H+tf.concat(0, [h_upper, h, h_lower])
+            return index+1, H+tf.concat(axis=0, values=[h_upper, h, h_lower])
         _, H_bottom = tf.while_loop(bottom_condition, bottom_body, [tf.constant(0), H])
         
         # Top-down
@@ -275,12 +276,12 @@ class RNN(object):
             t = tf.slice(self.T_hat, [index,0,self.degree+2], [1, self.samples, 1])
             c = tf.gather(H, t[0,:,0])
             
-            h = self.f_h_top(tf.concat(1, [self.m, p[0,:,:], x[0,:,:], c]))
+            h = self.f_h_top(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], c]))
             h = tf.nn.dropout(h, self.krR)
             
             h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
             h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_dimension])
-            return index-1, H+tf.concat(0, [h_upper, h, h_lower])
+            return index-1, H+tf.concat(axis=0, values=[h_upper, h, h_lower])
         _, H_top = tf.while_loop(top_condition, top_body, [self.nodes-1, H])
         
         self.H = H_bottom + H_top
@@ -317,7 +318,7 @@ class RNN(object):
         e = tf.reshape(self.e, [self.nodes * self.samples])
         y = tf.reshape(self.y, [self.nodes * self.samples])
         Y = tf.one_hot(y, self.output_dimension, on_value=1.)
-        self.loss = tf.reduce_sum(e * tf.nn.softmax_cross_entropy_with_logits(self.O, Y))
+        self.loss = tf.reduce_sum(e * tf.nn.softmax_cross_entropy_with_logits(logits=self.O, labels=Y))
         return
     
     def create_update_op(self):
@@ -499,7 +500,7 @@ def main():
     config = Config()
     model = RNN(config)
     with tf.Session() as sess:
-        sess.run(tf.initialize_all_variables())
+        sess.run(tf.global_variables_initializer())
         L = sess.run(model.L)
         print L
         print tf.trainable_variables()

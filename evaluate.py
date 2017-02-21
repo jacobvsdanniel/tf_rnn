@@ -11,8 +11,8 @@ import rnn
 
 batch_nodes = 1000
 batch_trees = 16
-patience = 3
-max_epoches = 30
+patience = 5
+max_epoches = 50
 
 def load_embedding(model, word_list, dataset):
     """ Load pre-trained word embeddings into the dictionary of model
@@ -64,7 +64,7 @@ def load_data_and_initialize_model(dataset, split_list=["train", "validate", "te
     # Initialize a model
     model = rnn.RNN(config)
     model.sess = tf.Session()
-    model.sess.run(tf.initialize_all_variables())
+    model.sess.run(tf.global_variables_initializer())
     if use_pretrained_embedding: load_embedding(model, word_list, dataset)
     return data, ne_list, model
 
