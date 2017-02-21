@@ -162,7 +162,7 @@ def train_model(dataset):
     
     saver = tf.train.Saver()
     if load_existing_model:
-        saver.restore(model.sess, "keep_training.model")
+        saver.restore(model.sess, "./keep_training.model")
     
     best_epoch = 0
     best_score = (-1, -1, -1)
@@ -190,7 +190,7 @@ def train_model(dataset):
     print "\n<Best Epoch %d>" % best_epoch
     print "[train] average loss %.3f" % best_loss
     print "[validate] precision=%.1f%% recall=%.1f%% f1=%.3f%%" % best_score
-    saver.restore(model.sess, "tmp.model")
+    saver.restore(model.sess, "./tmp.model")
     ner_hat_list = predict_dataset(model, data["test"][0], ne_list)
     score = evaluate_prediction(data["test"][1], ner_hat_list)
     print "[test] precision=%.1f%% recall=%.1f%% f1=%.3f%%" % score
@@ -202,7 +202,7 @@ def evaluate_model(dataset, split):
     data, ne_list, model = load_data_and_initialize_model(dataset, split_list=[split])
     
     saver = tf.train.Saver()
-    saver.restore(model.sess, "tmp.model")
+    saver.restore(model.sess, "./tmp.model")
     ner_hat_list = predict_dataset(model, data[split][0], ne_list)
     score = evaluate_prediction(data[split][1], ner_hat_list)
     print "[%s]" % split + " precision=%.1f%% recall=%.1f%% f1=%.3f%%" % score
