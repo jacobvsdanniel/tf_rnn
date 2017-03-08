@@ -26,15 +26,22 @@ data_path_suffix = "data/english/annotations"
     
 glove_file = "/home/danniel/Downloads/glove.840B.300d.txt"
 
+senna_path = "/home/danniel/Downloads/senna/hash"
+lexicon_meta_list = [
+    {"ne": "PERSON", "path": os.path.join(dataset, "senna_per.txt"), "senna": os.path.join(senna_path, "ner.per.lst")}, 
+    {"ne": "ORG", "path": os.path.join(dataset, "senna_org.txt"), "senna": os.path.join(senna_path, "ner.org.lst")},
+    {"ne": "LOC", "path": os.path.join(dataset, "senna_loc.txt"), "senna": os.path.join(senna_path, "ner.loc.lst")}]
+    #{"ne": "WORK_OF_ART", "path": os.path.join(dataset, "senna_misc.txt"), "senna": os.path.join(senna_path, "ner.misc.lst")}
+
 def log(msg):
     sys.stdout.write(msg)
     sys.stdout.flush()
     return
 
-def read_list_file(file_path):
+def read_list_file(file_path, encoding="utf8"):
     log("Read %s..." % file_path)
     
-    with codecs.open(file_path, "r", encoding="utf8") as f:
+    with codecs.open(file_path, "r", encoding=encoding) as f:
         line_list = f.read().splitlines()
     line_to_index = {line: index for index, line in enumerate(line_list)}
     
@@ -69,6 +76,97 @@ def extract_vocabulary_and_alphabet():
     log(" done\n")
     return
 
+def traverse_tree(tree, ner_raw_data, head_raw_data, text_raw_data, index_to_lexicon):
+    pos = tree.label
+    span = tree.span
+    head = tree.head if hasattr(tree, "head") else head_raw_data[(span, pos)][1]
+    ne = ner_raw_data[span] if span in ner_raw_data else "NONE"
+    constituent = " ".join(text_raw_data[span[0]:span[1]]).lower()
+    
+    # Clean lexicon
+    for index, lexicon in index_to_lexicon.iteritems():
+        if constituent in lexicon and ne != lexicon_meta_list[index]["ne"]:
+            del lexicon[constituent]
+    
+    # Binarize children
+    if len(tree.subtrees) > 2:
+        side_child_pos = tree.subtrees[-1].label
+        side_child_span = tree.subtrees[-1].span
+        side_child_head = head_raw_data[(side_child_span, side_child_pos)][1]
+        if side_child_head != head:
+            sub_subtrees = tree.subtrees[:-1]
+        else:
+            sub_subtrees = tree.subtrees[1:]
+        new_span = (sub_subtrees[0].span[0], sub_subtrees[-1].span[1])
+        new_tree = PSTree(label=pos, span=new_span, subtrees=sub_subtrees)
+        new_tree.head = head
+        if side_child_head != head:
+            tree.subtrees = [new_tree, tree.subtrees[-1]]
+        else:
+            tree.subtrees = [tree.subtrees[0], new_tree]
+         
+    # Process children
+    for subtree in tree.subtrees:
+        traverse_tree(subtree, ner_raw_data, head_raw_data, text_raw_data, index_to_lexicon)
+    return
+
+def extract_clean_senna_lexicon():
+    index_to_lexicon = {}
+    
+    print "\nReading raw lexicon from senna..."
+    for index, meta in enumerate(lexicon_meta_list):
+        if "senna" not in meta: continue
+        _, index_to_lexicon[index] = read_list_file(meta["senna"], "iso8859-15")
+    print "-"*50 + "\n   ne  phrases longest\n" + "-"*50
+    for index, lexicon in index_to_lexicon.iteritems():
+        longest_phrase = max(lexicon.iterkeys(), key=lambda phrase: len(phrase))
+        print "%12s %8d %s" % (lexicon_meta_list[index]["ne"], len(lexicon), longest_phrase)
+    
+    print "Reading training data..."
+    data_split_list = ["train", "validate"]
+    annotation_method_list = ["gold", "auto"]
+    raw_data = {}
+    for split in data_split_list:
+        raw_data[split] = {}
+        for method in annotation_method_list:
+            if split == "validate":
+                data_path_root = "development"
+            else:
+                data_path_root = split
+            full_path = os.path.join(data_path_prefix, data_path_root, data_path_suffix)
+            config = {"file_suffix": "%s_conll" % method, "dir_prefix": full_path}
+            raw_data[split][method] = load_data(config)
+    
+    log("\nCleaning lexicon by training data...")
+    for split in data_split_list:
+        for document in raw_data[split]["auto"]:
+            for part in raw_data[split]["auto"][document]:
+                
+                ner_raw_data = defaultdict(lambda: {})
+                for k, v in raw_data[split]["gold"][document][part]["ner"].iteritems():
+                    ner_raw_data[k[0]][(k[1], k[2])] = v
+                
+                for index, parse in enumerate(raw_data[split]["auto"][document][part]["parses"]):
+                    text_raw_data = raw_data[split]["auto"][document][part]["text"][index]
+                    
+                    if parse.subtrees[0].label == "NOPARSE": continue
+                    head_raw_data = raw_data[split]["auto"][document][part]["heads"][index]
+                    
+                    traverse_tree(parse, ner_raw_data[index], head_raw_data, text_raw_data,
+                        index_to_lexicon)
+    log(" done\n")
+       
+    print "-"*50 + "\n   ne  phrases longest\n" + "-"*50
+    for index, lexicon in index_to_lexicon.iteritems():
+        longest_phrase = max(lexicon.iterkeys(), key=lambda phrase: len(phrase))
+        print "%12s %8d %s" % (lexicon_meta_list[index]["ne"], len(lexicon), longest_phrase)
+        
+    for index, meta in enumerate(lexicon_meta_list):
+        with codecs.open(meta["path"], "w", encoding="iso8859-15") as f:
+            for phrase in index_to_lexicon[index]:
+                f.write("%s\n" % phrase)
+    return
+
 def extract_glove_embeddings():
     log("extract_glove_embeddings()...")
     
@@ -91,16 +189,16 @@ def extract_glove_embeddings():
     return
 
 def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
-                    character_to_index, word_to_index, pos_to_index,
-                    pos_count, ne_count, pos_ne_count):
+                    character_to_index, word_to_index, pos_to_index, index_to_lexicon,
+                    pos_count, ne_count, pos_ne_count, lexicon_hits):
     pos = tree.label
     word = tree.word
     span = tree.span
     head = tree.head if hasattr(tree, "head") else head_raw_data[(span, pos)][1]
     ne = ner_raw_data[span] if span in ner_raw_data else "NONE"
+    constituent = " ".join(text_raw_data[span[0]:span[1]]).lower()
     
     # Process pos info
-    node.pos = pos
     node.pos_index = pos_to_index[pos]
     pos_count[pos] += 1
     
@@ -114,13 +212,22 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
     
     # Process ne info
     node.ne = ne
-    if not node.parent or node.parent.span!=span:
-        ne_count[ne] += 1
     if ne != "NONE":
+        if not node.parent or node.parent.span!=span:
+            ne_count[ne] += 1
         pos_ne_count[pos] += 1
     
     # Process span info
     node.span = span
+    
+    # Process lexicon info
+    node.lexicon_hit = [0] * len(index_to_lexicon)
+    hits = 0
+    for index, lexicon in index_to_lexicon.iteritems():
+        if constituent in lexicon:
+            node.lexicon_hit[index] = 1
+            hits = 1
+    lexicon_hits[0] += hits
     
     # Binarize children
     if len(tree.subtrees) > 2:
@@ -145,12 +252,12 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
         child = Node()
         node.add_child(child)
         child_nodes = construct_node(child, subtree, ner_raw_data, head_raw_data, text_raw_data,
-            character_to_index, word_to_index, pos_to_index,
-            pos_count, ne_count, pos_ne_count)
+            character_to_index, word_to_index, pos_to_index, index_to_lexicon,
+            pos_count, ne_count, pos_ne_count, lexicon_hits)
         nodes += child_nodes
     return nodes
 
-def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index):
+def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index, index_to_lexicon):
     log("get_tree_data()...")
     """ Get tree structured data from CoNLL 2012
     
@@ -162,6 +269,7 @@ def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index):
     pos_count = defaultdict(lambda: 0)
     ne_count = defaultdict(lambda: 0)
     pos_ne_count = defaultdict(lambda: 0)
+    lexicon_hits = [0]
     
     for document in raw_data["auto"]:
         for part in raw_data["auto"][document]:
@@ -180,15 +288,15 @@ def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index):
                 root_node = Node()
                 nodes = construct_node(
                    root_node, parse, ner_raw_data[index], head_raw_data, text_raw_data,
-                   character_to_index, word_to_index, pos_to_index,
-                   pos_count, ne_count, pos_ne_count)
+                   character_to_index, word_to_index, pos_to_index, index_to_lexicon,
+                   pos_count, ne_count, pos_ne_count, lexicon_hits)
                 root_node.nodes = nodes
                 
                 tree_list.append(root_node)
                 ner_list.append(ner_raw_data[index])
                 
     log(" %d sentences\n" % len(tree_list))
-    return tree_list, ner_list, word_count, pos_count, ne_count, pos_ne_count
+    return tree_list, ner_list, word_count, pos_count, ne_count, pos_ne_count, lexicon_hits[0]
 
 def label_tree_data(node, pos_to_index, ne_to_index):
     node.y = ne_to_index[node.ne]
@@ -222,22 +330,39 @@ def read_dataset(data_split_list = ["train", "validate", "test"]):
     pos_list, pos_to_index = read_list_file(pos_file)
     ne_list, ne_to_index = read_list_file(ne_file)
     
+    # Read lexicon
+    index_to_lexicon = {}
+    for index, meta in enumerate(lexicon_meta_list):
+        #_, index_to_lexicon[index] = read_list_file(meta["path"], "iso8859-15")
+        _, index_to_lexicon[index] = read_list_file(meta["senna"], "iso8859-15")
+    
     # Build a tree structure for each sentence
     data = {}
     word_count = {}
     pos_count = {}
     ne_count = {}
     pos_ne_count = {}
+    lexicon_hits = {}
     for split in data_split_list:
-        (tree_list, ner_list,
-            word_count[split], pos_count[split], ne_count[split], pos_ne_count[split]) = (
-            get_tree_data(raw_data[split], character_to_index, word_to_index, pos_to_index))
-        sentences = len(tree_list)
-        nodes = sum(pos_count[split].itervalues())
-        nes = sum(pos_ne_count[split].itervalues())
+        (tree_list, ner_list, word_count[split], pos_count[split], ne_count[split],
+            pos_ne_count[split], lexicon_hits[split]) = (
+            get_tree_data(raw_data[split], character_to_index, word_to_index, pos_to_index,
+                index_to_lexicon))
         data[split] = [tree_list, ner_list]
-        log("<%s>\n  %d sentences; %d nodes; %d named entities\n"
-            % (split, sentences, nodes, nes))
+    
+    # Show statistics of each data split 
+    print "-" * 80
+    print "%10s%10s%9s%9s%7s%12s%13s" % ("split", "sentence", "token", "node", "NE", "spanned_NE",
+        "lexicon_hit")
+    print "-" * 80
+    for split in data_split_list:
+        print "%10s%10d%9d%9d%7d%12d%13d" % (split,
+            len(data[split][0]),
+            word_count[split],
+            sum(pos_count[split].itervalues()),
+            sum(len(ner) for ner in data[split][1]),
+            sum(ne_count[split].itervalues()),
+            lexicon_hits[split])
     
     # Show POS distribution
     total_pos_count = defaultdict(lambda: 0)
@@ -246,44 +371,30 @@ def read_dataset(data_split_list = ["train", "validate", "test"]):
             total_pos_count[pos] += pos_count[split][pos]
     nodes = sum(total_pos_count.itervalues())
     print "\nTotal %d nodes" % nodes
-    print "-"*50 + "\n   POS   count  ratio\n" + "-"*50
-    for pos, count in sorted(total_pos_count.iteritems(), key=lambda x: x[1], reverse=True):
+    print "-"*80 + "\n   POS   count  ratio\n" + "-"*80
+    for pos, count in sorted(total_pos_count.iteritems(), key=lambda x: x[1], reverse=True)[:10]:
         print "%6s %7d %5.1f%%" % (pos, count, count*100./nodes)
     
-    # Show number of tokens and NEs in each split
-    reals = 0
-    split_nes_dict = {}
-    for split in data_split_list:
-        if split == "test": continue
-        split_nes_dict[split] = sum(len(ner) for ner in data[split][1])
-        reals += split_nes_dict[split]
-    print "\nTotal %d named entities" % reals
-    print "-"*50 + "\n       split   token     NE\n" + "-"*50
-    for split in data_split_list:
-        if split == "test": continue
-        print "%12s %7d %6d" % (split, word_count[split], split_nes_dict[split])
-    
-    # Show NE distribution
+    # Show NE distribution in [train, validate]
     total_ne_count = defaultdict(lambda: 0)
     for split in data_split_list:
         if split == "test": continue
         for ne in ne_count[split]:
-            if ne == "NONE": continue
             total_ne_count[ne] += ne_count[split][ne]
     nes = sum(total_ne_count.itervalues())
-    print "\nTotal %d spanned named entities" % nes
-    print "-"*50 + "\n          NE  count  ratio\n" + "-"*50
+    print "\nTotal %d spanned named entities in [train, validate]" % nes
+    print "-"*80 + "\n          NE  count  ratio\n" + "-"*80
     for ne, count in sorted(total_ne_count.iteritems(), key=lambda x: x[1], reverse=True):
         print "%12s %6d %5.1f%%" % (ne, count, count*100./nes)
     
-    # Show POS-NE distribution
+    # Show POS-NE distribution in [train, validate]
     total_pos_ne_count = defaultdict(lambda: 0)
     for split in data_split_list:
         if split == "test": continue
         for pos in pos_ne_count[split]:
             total_pos_ne_count[pos] += pos_ne_count[split][pos]
-    print "-"*50 + "\n   POS     NE   total  ratio\n" + "-"*50
-    for pos, count in sorted(total_pos_ne_count.iteritems(), key=lambda x: x[1], reverse=True):
+    print "-"*80 + "\n   POS     NE   total  ratio\n" + "-"*80
+    for pos, count in sorted(total_pos_ne_count.iteritems(), key=lambda x: x[1], reverse=True)[:10]:
         total = total_pos_count[pos]
         print "%6s %6d %7d %5.1f%%" % (pos, count, total, count*100./total)
     
@@ -295,11 +406,12 @@ def read_dataset(data_split_list = ["train", "validate", "test"]):
         for tree in data[split][0]:
             label_tree_data(tree, pos_to_index, ne_to_index)
     return (data, word_list, ne_list,
-            len(character_to_index), len(pos_to_index), len(ne_to_index))
+            len(character_to_index), len(pos_to_index), len(ne_to_index), len(index_to_lexicon))
 
 if __name__ == "__main__":
-    extract_vocabulary_and_alphabet()
-    extract_glove_embeddings()
+    #extract_vocabulary_and_alphabet()
+    #extract_glove_embeddings()
+    #extract_clean_senna_lexicon()
     read_dataset()
     exit()
     

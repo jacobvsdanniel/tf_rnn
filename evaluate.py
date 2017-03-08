@@ -11,8 +11,8 @@ import rnn
 
 batch_nodes = 1000
 batch_trees = 16
-patience = 5
-max_epoches = 50
+patience = 20
+max_epoches = 100
 
 def load_embedding(model, word_list, dataset):
     """ Load pre-trained word embeddings into the dictionary of model
@@ -36,6 +36,15 @@ def load_embedding(model, word_list, dataset):
     model.sess.run(model.L.assign(L))
     return
     
+def load_lexicon_embedding(model, dataset):
+    """ Load lexicon embeddings into the lexicon dictionary of model
+    
+    lexicon_embedding.npy: a 2d array of phrase vectors
+    """
+    embedding_array = np.load(os.path.join(dataset, "lexicon_embedding.npy"))
+    model.sess.run(model.L_phrase.assign(embedding_array))
+    return
+    
 def load_data_and_initialize_model(dataset, split_list=["train", "validate", "test"],
         use_pretrained_embedding=True):
     """ Get tree data and initialize a model
@@ -57,7 +66,7 @@ def load_data_and_initialize_model(dataset, split_list=["train", "validate", "te
     # Load data and determine dataset related hyperparameters
     config = rnn.Config()
     (data, word_list, ne_list,
-        config.alphabet_size, config.pos_dimension, config.output_dimension
+        config.alphabet_size, config.pos_dimension, config.output_dimension, config.lexicons
         ) = data_utils.read_dataset(split_list)
     config.vocabulary_size = len(word_list)
     
