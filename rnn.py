@@ -314,7 +314,7 @@ class RNN(object):
             h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
             h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_dimension])
             return index+1, H+tf.concat(axis=0, values=[h_upper, h, h_lower])
-        _, H_bottom = tf.while_loop(bottom_condition, bottom_body, [tf.constant(0), H])
+        _, H_bottom = tf.while_loop(bottom_condition, bottom_body, [tf.constant(0), H], parallel_iterations=1)
         
         # Top-down
         def top_condition(index, H):
@@ -326,6 +326,8 @@ class RNN(object):
             
             t = tf.slice(self.T_hat, [index,0,self.degree+2], [1, self.samples, 1])
             c = tf.gather(H, t[0,:,0])
+            #t = tf.slice(self.T_hat, [index,0,self.degree+2], [1, self.samples, 2])
+            #c = tf.reshape(tf.gather(H, t[0,:,:]), [self.samples, 2*self.hidden_dimension])
             
             h = self.f_h_top(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], lex[0,:,:], c]))
             #h = self.f_h_top(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], lex[0,:,:]]), c)
@@ -335,7 +337,7 @@ class RNN(object):
             h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
             h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_dimension])
             return index-1, H+tf.concat(axis=0, values=[h_upper, h, h_lower])
-        _, H_top = tf.while_loop(top_condition, top_body, [self.nodes-1, H])
+        _, H_top = tf.while_loop(top_condition, top_body, [self.nodes-1, H], parallel_iterations=1)
         #_, H_top = tf.while_loop(top_condition, top_body, [self.nodes-1, H_bottom])
         
         self.H = H_bottom + H_top
