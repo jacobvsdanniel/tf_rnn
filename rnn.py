@@ -398,27 +398,23 @@ class RNN(object):
         padding = [-3] * (self.word_length - len(word_cut))
         return word_cut + padding
 
-    def get_formatted_input(self, tree):
+    def get_formatted_input(self, tree, pyramid):
         """ Preprocessing: Extract data structures from an input tree
         
-        The argument "tree" is actually a root node
+        tree: the root node of a tree
+        pyramid: a bottom-up list of additional nodes outside the tree
         """
-        # Get BFS layers
-        layer_list = []
-        layer = [tree]
-        while layer:
-            layer_list.append(layer)
-            child_layer = []
-            for node in layer:
-                child_layer.extend(node.child_list)
-            layer = child_layer
-        
-        # Index nodes bottom-up
+        # Get top-down node list of the tree
+        node_list = [tree]
         index = -1
-        for layer in reversed(layer_list):
-            for node in layer:
-                index += 1
-                node.index = index
+        while index+1 < len(node_list):
+            index += 1
+            node_list.extend(node_list[index].child_list)
+        
+        # Merge two lists of nodes according to bottom-up dependency; index all nodes
+        node_list = node_list[::-1] + pyramid
+        for index, node in enumerate(node_list):
+            node.index = index
         
         # Extract data from layers bottom-up
         N = []
@@ -431,42 +427,42 @@ class RNN(object):
         lex = []
         S = []
         l = 0
-        for layer in reversed(layer_list):
-            for node in layer:
-                N.append(node)
-                
-                e.append(1)
-                
-                y.append(node.y)
-                
-                child_index_list = [child.index for child in node.child_list]
-                T.append(child_index_list
-                         + [-1] * (self.degree-len(node.child_list))
-                         + [node.left.index if node.left else -1,
-                            node.right.index if node.right else -1,
-                            node.parent.index if node.parent else -1])
-                
-                p.append([node.pos_index,
-                          node.left.pos_index if node.left else -1,
-                          node.right.pos_index if node.right else -1])
-                
-                x.append([node.word_index,
-                          node.head_index,
-                          node.left.head_index if node.left else -1,
-                          node.right.head_index if node.right else -1])
-                
-                w.append([self.get_padded_word(node.word_split),
-                          self.get_padded_word(node.head_split),
-                          self.get_padded_word(node.left.head_split if node.left else []),
-                          self.get_padded_word(node.right.head_split if node.right else [])])
-                
-                lex.append(node.lexicon_hit)
-                
-                S.append([node.index,
-                          node.left.index if node.left else -1,
-                          node.right.index if node.right else -1])
-                
-                if node.word_index != -1: l += 1
+        for node in node_list:
+            N.append(node)
+            
+            e.append(1)
+            
+            y.append(node.y)
+            
+            child_index_list = [child.index for child in node.child_list]
+            T.append(child_index_list
+                     + [-1] * (self.degree-len(node.child_list))
+                     + [node.left.index if node.left else -1,
+                        node.right.index if node.right else -1,
+                        node.parent.index if node.parent else -1])
+            
+            p.append([node.pos_index,
+                      node.left.pos_index if node.left else -1,
+                      node.right.pos_index if node.right else -1])
+            
+            x.append([node.word_index,
+                      node.head_index,
+                      node.left.head_index if node.left else -1,
+                      node.right.head_index if node.right else -1])
+            
+            w.append([self.get_padded_word(node.word_split),
+                      self.get_padded_word(node.head_split),
+                      self.get_padded_word(node.left.head_split if node.left else []),
+                      self.get_padded_word(node.right.head_split if node.right else [])])
+            
+            lex.append(node.lexicon_hit)
+            
+            S.append([node.index,
+                      node.left.index if node.left else -1,
+                      node.right.index if node.right else -1])
+            
+            if node.word_index != -1: l += 1
+            
         N   = np.array(N)
         e   = np.array(  e, dtype=np.float32)
         y   = np.array(  y, dtype=np.int32)
@@ -476,14 +472,15 @@ class RNN(object):
         w   = np.array(  w, dtype=np.int32)
         lex = np.array(lex, dtype=np.float32)
         S   = np.array(  S, dtype=np.int32)
-        return N, e, y, T, p, x, w, lex, S, l, tree.index
+        
+        return N, e, y, T, p, x, w, lex, S, l, tree.index, tree.tokens
             
-    def get_batch_input(self, tree_list):
+    def get_batch_input(self, tree_pyramid_list):
         """ Preprocessing: Get batched data structures for the input layer from input trees
         """
         input_list = []
-        for tree in tree_list:
-            input_list.append(self.get_formatted_input(tree))
+        for tree, pyramid in tree_pyramid_list:
+            input_list.append(self.get_formatted_input(tree, pyramid))
         
         samples = len(input_list)
         nodes = max([i[1].shape[0] for i in input_list])
@@ -498,26 +495,28 @@ class RNN(object):
         S   = -1 * np.ones( [nodes, samples, self.neighbors              ], dtype=np.int32)
         l   =      np.zeros(        samples                               , dtype=np.float32)
         r   =      np.zeros(        samples                               , dtype=np.int32)
+        tokens =   np.zeros(        samples                               , dtype=np.int32)
         
         for sample, sample_input in enumerate(input_list):
             n = sample_input[0].shape[0]
-            (  N[:n, sample      ],
-               e[:n, sample      ],
-               y[:n, sample      ],
-               T[:n, sample, :   ],
-               p[:n, sample, :   ],
-               x[:n, sample, :   ],
-               w[:n, sample, :, :],
-             lex[:n, sample, :   ],
-               S[:n, sample, :   ],
-               l[    sample      ],
-               r[    sample      ]) = sample_input
-        return N, e, y, T, p, x, w, lex, S, l, r
+            (     N[:n, sample      ],
+                  e[:n, sample      ],
+                  y[:n, sample      ],
+                  T[:n, sample, :   ],
+                  p[:n, sample, :   ],
+                  x[:n, sample, :   ],
+                  w[:n, sample, :, :],
+                lex[:n, sample, :   ],
+                  S[:n, sample, :   ],
+                  l[    sample      ],
+                  r[    sample      ],
+             tokens[    sample      ]) = sample_input
+        return N, e, y, T, p, x, w, lex, S, l, r, tokens
         
-    def train(self, tree_list):
+    def train(self, tree_pyramid_list):
         """ Update parameters from a batch of trees with labeled nodes
         """
-        _, e, y, T, p, x, w, lex, S, l, _ = self.get_batch_input(tree_list)
+        _, e, y, T, p, x, w, lex, S, l, _, _ = self.get_batch_input(tree_pyramid_list)
         
         loss, _ = self.sess.run([self.loss, self.update_op],
                     feed_dict={self.e: e, self.y: y, self.T: T,
@@ -527,12 +526,12 @@ class RNN(object):
                                self.krH: self.keep_rate_H, self.krR: self.keep_rate_R})
         return loss
     
-    def predict(self, tree_list):
+    def predict(self, tree_pyramid_list):
         """ Predict positive spans and their labels from a batch of trees
         
         Spans that are contained by other positive spans are ignored.
         """
-        N, _, _, T, p, x, w, lex, S, l, r = self.get_batch_input(tree_list)
+        N, e, _, T, p, x, w, lex, S, l, r, tokens = self.get_batch_input(tree_pyramid_list)
         
         y_hat = self.sess.run(self.y_hat,
                     feed_dict={self.T: T, 
@@ -541,22 +540,47 @@ class RNN(object):
                                self.krP: 1.0, self.krX: 1.0,
                                self.krH: 1.0, self.krR: 1.0})
         
-        def parse_output(node_index, sample_index, span_y):
+        def parse_output(node_index, sample_index, span_y, uncovered_token_set):
             node = N[node_index][sample_index]
             label = y_hat[node_index][sample_index]
             
             if label != self.output_dimension-1:
                 span_y[node.span] = label
+                for token_index in xrange(*node.span):
+                    uncovered_token_set.remove(token_index)
                 return
             
             for child in node.child_list:
-                parse_output(child.index, sample_index, span_y)
+                parse_output(child.index, sample_index, span_y, uncovered_token_set)
             return
         
         tree_span_y = []
         for sample_index in xrange(T.shape[1]): 
             span_y = {}
-            parse_output(r[sample_index], sample_index, span_y)
+            uncovered_token_set = set(xrange(tokens[sample_index]))
+            
+            # Get span to positive y prediction of trees in top-down orders
+            parse_output(r[sample_index], sample_index, span_y, uncovered_token_set)
+            
+            # Get span to positive y prediction of pyramids in top-down orders
+            for i in xrange(T.shape[0]-1, -1, -1):
+                if e[i][sample_index] == 1:
+                    pyramid_top_index = i
+                    break
+            for node_index in xrange(pyramid_top_index, r[sample_index], -1):
+                node = N[node_index][sample_index]
+                label = y_hat[node_index][sample_index]
+                if label != self.output_dimension-1:
+                    conflict = False
+                    for token_index in xrange(*node.span):
+                        if token_index not in uncovered_token_set:
+                            conflict = True
+                            break
+                    if conflict: continue
+                    span_y[node.span] = label
+                    for token_index in xrange(*node.span):
+                        uncovered_token_set.remove(token_index)
+                    
             tree_span_y.append(span_y)
         
         return tree_span_y

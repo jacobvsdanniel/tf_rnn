@@ -49,7 +49,10 @@ def load_data_and_initialize_model(dataset, split_list=["train", "validate", "te
         use_pretrained_embedding=True):
     """ Get tree data and initialize a model
     
-    data: a dictionary; key-value example: "train"-(tree_list, ner_list)
+    #data: a dictionary; key-value example: "train"-(tree_list, ner_list)
+    data: a dictionary; key-value example:
+        "train"-{"tree_pyramid_list": tree_pyramid_list, "ner_list": ner_list}
+    tree_pyramid_list: a list of (tree, pyramid) tuples
     ner_list: a list of dictionaries; key-value example: (3,5)-"PERSON"
     ne_list: a list of distinct string labels, e.g. "PERSON"
     """
@@ -77,36 +80,39 @@ def load_data_and_initialize_model(dataset, split_list=["train", "validate", "te
     if use_pretrained_embedding: load_embedding(model, word_list, dataset)
     return data, ne_list, model
 
-def make_batch_list(tree_list):
-    """ Create a list of batches of trees
+def make_batch_list(tree_pyramid_list):
+    """ Create a list of batches of (tree, pyramid) tuples
     
-    The trees in the same batch have similar numbers of nodes, so later padding can be minimized.
+    The (tree, pyramid) tuples in the same batch have similar numbers of nodes,
+    so later padding can be minimized.
     """
-    index_tree_list = sorted(enumerate(tree_list), key=lambda x: x[1].nodes)
+    index_tree_pyramid_list = sorted(enumerate(tree_pyramid_list),
+        key=lambda x: x[1][0].nodes+len(x[1][1]))
     
     batch_list = []
     batch = []
-    for index, tree in index_tree_list:
-        if len(batch)+1>batch_trees or (len(batch)+1)*tree.nodes>batch_nodes:
+    for index, tree_pyramid in index_tree_pyramid_list:
+        nodes = tree_pyramid[0].nodes + len(tree_pyramid[1])
+        if len(batch)+1 > batch_trees or (len(batch)+1)*nodes > batch_nodes:
             batch_list.append(batch)
             batch = []
-        batch.append((index, tree))
+        batch.append((index, tree_pyramid))
     batch_list.append(batch)
     
     random.shuffle(batch_list)
     return batch_list
     
-def train_an_epoch(model, tree_list):
+def train_an_epoch(model, tree_pyramid_list):
     """ Update model parameters for every tree once
     """
-    batch_list = make_batch_list(tree_list)
+    batch_list = make_batch_list(tree_pyramid_list)
     
-    total_trees = len(tree_list)
+    total_trees = len(tree_pyramid_list)
     trees = 0
     loss = 0.
     for i, batch in enumerate(batch_list):
-        _, tree_list = zip(*batch)
-        loss += model.train(tree_list)
+        _, tree_pyramid_list = zip(*batch)
+        loss += model.train(tree_pyramid_list)
         trees += len(batch)
         sys.stdout.write("\r(%5d/%5d) average loss %.3f   " % (trees, total_trees, loss/trees))
         sys.stdout.flush()
@@ -114,15 +120,15 @@ def train_an_epoch(model, tree_list):
     sys.stdout.write("\r" + " "*64 + "\r")
     return loss / total_trees
 
-def predict_dataset(model, tree_list, ne_list):
+def predict_dataset(model, tree_pyramid_list, ne_list):
     """ Get dictionarues of predicted positive spans and their labels for every tree
     """
-    batch_list = make_batch_list(tree_list)
+    batch_list = make_batch_list(tree_pyramid_list)
     
-    ner_list = [None] * len(tree_list)
+    ner_list = [None] * len(tree_pyramid_list)
     for batch in batch_list:
-        index_list, tree_list = zip(*batch)
-        for i, span_y in enumerate(model.predict(tree_list)):
+        index_list, tree_pyramid_list = zip(*batch)
+        for i, span_y in enumerate(model.predict(tree_pyramid_list)):
             ner_list[index_list[i]] = {span: ne_list[y] for span, y in span_y.iteritems()}
     return ner_list
     
@@ -180,11 +186,11 @@ def train_model(dataset):
         print "\n<Epoch %d>" % epoch
         
         start_time = time.time()
-        loss = train_an_epoch(model, data["train"][0])
+        loss = train_an_epoch(model, data["train"]["tree_pyramid_list"])
         print "[train] average loss %.3f; elapsed %.0fs" % (loss, time.time() - start_time)
         
-        ner_hat_list = predict_dataset(model, data["validate"][0], ne_list)
-        score = evaluate_prediction(data["validate"][1], ner_hat_list)
+        ner_hat_list = predict_dataset(model, data["validate"]["tree_pyramid_list"], ne_list)
+        score = evaluate_prediction(data["validate"]["ner_list"], ner_hat_list)
         print "[validate] precision=%.1f%% recall=%.1f%% f1=%.3f%%" % score,
         
         if best_score[2] < score[2]:
@@ -200,8 +206,8 @@ def train_model(dataset):
     print "[train] average loss %.3f" % best_loss
     print "[validate] precision=%.1f%% recall=%.1f%% f1=%.3f%%" % best_score
     saver.restore(model.sess, "./tmp.model")
-    ner_hat_list = predict_dataset(model, data["test"][0], ne_list)
-    score = evaluate_prediction(data["test"][1], ner_hat_list)
+    ner_hat_list = predict_dataset(model, data["test"]["tree_pyramid_list"], ne_list)
+    score = evaluate_prediction(data["test"]["ner_list"], ner_hat_list)
     print "[test] precision=%.1f%% recall=%.1f%% f1=%.3f%%" % score
     return
 
@@ -212,8 +218,8 @@ def evaluate_model(dataset, split):
     
     saver = tf.train.Saver()
     saver.restore(model.sess, "./tmp.model")
-    ner_hat_list = predict_dataset(model, data[split][0], ne_list)
-    score = evaluate_prediction(data[split][1], ner_hat_list)
+    ner_hat_list = predict_dataset(model, data[split]["tree_pyramid_list"], ne_list)
+    score = evaluate_prediction(data[split]["ner_list"], ner_hat_list)
     print "[%s]" % split + " precision=%.1f%% recall=%.1f%% f1=%.3f%%" % score
     return
     
