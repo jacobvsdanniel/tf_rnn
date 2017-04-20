@@ -29,14 +29,15 @@ glove_file = "/home/danniel/Downloads/glove.840B.300d.txt"
 senna_path = "/home/danniel/Downloads/senna/hash"
 dbpedia_path = "/home/danniel/Desktop/dbpedia_lexicon"
 lexicon_meta_list = [
-    {"ne": "PER",  "path": os.path.join(dataset, "senna_per.txt"),    "senna": os.path.join(senna_path, "ner.per.lst")}, 
-    {"ne": "ORG",  "path": os.path.join(dataset, "senna_org.txt"),    "senna": os.path.join(senna_path, "ner.org.lst")},
-    {"ne": "LOC",  "path": os.path.join(dataset, "senna_loc.txt"),    "senna": os.path.join(senna_path, "ner.loc.lst")},
-    #{"ne": "MISC", "path": os.path.join(dataset, "senna_misc.txt"),   "senna": os.path.join(senna_path, "ner.misc.lst")},
-    {"ne": "PER",  "path": os.path.join(dataset, "dbpedia_per.txt"),  "dbpedia": os.path.join(dbpedia_path, "dbpedia_person.txt")},
-    {"ne": "ORG",  "path": os.path.join(dataset, "dbpedia_org.txt"),  "dbpedia": os.path.join(dbpedia_path, "dbpedia_organisation.txt")},
-    {"ne": "LOC",  "path": os.path.join(dataset, "dbpedia_loc.txt"),  "dbpedia": os.path.join(dbpedia_path, "dbpedia_place.txt")},
-    {"ne": "MISC", "path": os.path.join(dataset, "dbpedia_misc.txt"), "dbpedia": os.path.join(dbpedia_path, "dbpedia_work.txt")}]
+    {"ne": "PERSON",      "encoding": "iso8859-15", "clean": os.path.join(dataset, "senna_PER.txt"),   "raw": os.path.join(senna_path, "ner.per.lst")}, 
+    {"ne": "ORG",         "encoding": "iso8859-15", "clean": os.path.join(dataset, "senna_ORG.txt"),   "raw": os.path.join(senna_path, "ner.org.lst")},
+    {"ne": "LOC",         "encoding": "iso8859-15", "clean": os.path.join(dataset, "senna_LOC.txt"),   "raw": os.path.join(senna_path, "ner.loc.lst")}
+    #{"ne": "WORK_OF_ART", "encoding": "iso8859-15", "clean": os.path.join(dataset, "senna_WOR.txt"),   "raw": os.path.join(senna_path, "ner.misc.lst")},
+    #{"ne": "PERSON",      "encoding": "utf8",       "clean": os.path.join(dataset, "dbpedia_PER.txt"), "raw": os.path.join(dbpedia_path, "dbpedia_person.txt")},
+    #{"ne": "ORG",         "encoding": "utf8",       "clean": os.path.join(dataset, "dbpedia_ORG.txt"), "raw": os.path.join(dbpedia_path, "dbpedia_organisation.txt")},
+    #{"ne": "LOC",         "encoding": "utf8",       "clean": os.path.join(dataset, "dbpedia_LOC.txt"), "raw": os.path.join(dbpedia_path, "dbpedia_place.txt")}
+    #{"ne": "WORK_OF_ART", "encoding": "utf8",       "clean": os.path.join(dataset, "dbpedia_WOR.txt"), "raw": os.path.join(dbpedia_path, "dbpedia_work.txt")}
+    ]
 
 def log(msg):
     sys.stdout.write(msg)
@@ -81,17 +82,19 @@ def extract_vocabulary_and_alphabet():
     log(" done\n")
     return
 
-def traverse_tree(tree, ner_raw_data, head_raw_data, text_raw_data, index_to_lexicon):
+def traverse_tree(tree, ner_raw_data, head_raw_data, text_raw_data, lexicon_list, span_set):
     pos = tree.label
     span = tree.span
     head = tree.head if hasattr(tree, "head") else head_raw_data[(span, pos)][1]
     ne = ner_raw_data[span] if span in ner_raw_data else "NONE"
     constituent = " ".join(text_raw_data[span[0]:span[1]]).lower()
     
-    # Clean lexicon
-    for index, lexicon in index_to_lexicon.iteritems():
-        if constituent in lexicon and ne != lexicon_meta_list[index]["ne"]:
-            del lexicon[constituent]
+    span_set.add(span)
+    for index, lexicon in enumerate(lexicon_list):
+        if constituent in lexicon:
+            lexicon[constituent][0] += 1
+            if ne == lexicon_meta_list[index]["ne"]:
+                lexicon[constituent][1] += 1
     
     # Binarize children
     if len(tree.subtrees) > 2:
@@ -112,20 +115,38 @@ def traverse_tree(tree, ner_raw_data, head_raw_data, text_raw_data, index_to_lex
          
     # Process children
     for subtree in tree.subtrees:
-        traverse_tree(subtree, ner_raw_data, head_raw_data, text_raw_data, index_to_lexicon)
+        traverse_tree(subtree, ner_raw_data, head_raw_data, text_raw_data, lexicon_list, span_set)
     return
 
-def extract_clean_senna_lexicon():
-    index_to_lexicon = {}
+def traverse_pyramid(ner_raw_data, text_raw_data, lexicon_list, span_set):
+    max_dense_span = 3
+    # Start from bigram, since all unigrams are already covered by parses
+    for span_length in range(2, 1+max_dense_span):
+        for span_start in range(0, 1+len(text_raw_data)-span_length):
+            span = (span_start, span_start+span_length)
+            if span in span_set: continue
+            ne = ner_raw_data[span] if span in ner_raw_data else "NONE"
+            constituent = " ".join(text_raw_data[span[0]:span[1]]).lower()
+            
+            for index, lexicon in enumerate(lexicon_list):
+                if constituent in lexicon:
+                    lexicon[constituent][0] += 1
+                    if ne == lexicon_meta_list[index]["ne"]:
+                        lexicon[constituent][1] += 1
+    return
+
+def extract_clean_lexicon():
+    lexicon_list = []
     
-    print "\nReading raw lexicon from senna..."
-    for index, meta in enumerate(lexicon_meta_list):
-        if "senna" not in meta: continue
-        _, index_to_lexicon[index] = read_list_file(meta["senna"], "iso8859-15")
-    print "-"*50 + "\n   ne  phrases longest\n" + "-"*50
-    for index, lexicon in index_to_lexicon.iteritems():
-        longest_phrase = max(lexicon.iterkeys(), key=lambda phrase: len(phrase))
-        print "%12s %8d %s" % (lexicon_meta_list[index]["ne"], len(lexicon), longest_phrase)
+    print "\nReading raw lexicons..."
+    for meta in lexicon_meta_list:
+        lexicon_list.append(read_list_file(meta["raw"], encoding=meta["encoding"])[1])
+    print "-"*50 + "\n   ne  phrases shortest\n" + "-"*50
+    for index, lexicon in enumerate(lexicon_list):
+        for phrase in lexicon:
+            lexicon[phrase] = [0.,0.]
+        shortest_phrase = min(lexicon.iterkeys(), key=lambda phrase: len(phrase))
+        print "%12s %8d %s" % (lexicon_meta_list[index]["ne"], len(lexicon), shortest_phrase)
     
     print "Reading training data..."
     data_split_list = ["train", "validate"]
@@ -157,18 +178,24 @@ def extract_clean_senna_lexicon():
                     if parse.subtrees[0].label == "NOPARSE": continue
                     head_raw_data = raw_data[split]["auto"][document][part]["heads"][index]
                     
+                    span_set = set()
                     traverse_tree(parse, ner_raw_data[index], head_raw_data, text_raw_data,
-                        index_to_lexicon)
+                        lexicon_list, span_set)
+                    traverse_pyramid(ner_raw_data[index], text_raw_data, lexicon_list, span_set)
     log(" done\n")
        
-    print "-"*50 + "\n   ne  phrases longest\n" + "-"*50
-    for index, lexicon in index_to_lexicon.iteritems():
-        longest_phrase = max(lexicon.iterkeys(), key=lambda phrase: len(phrase))
-        print "%12s %8d %s" % (lexicon_meta_list[index]["ne"], len(lexicon), longest_phrase)
+    print "-"*50 + "\n   ne  phrases shortest\n" + "-"*50
+    for index, lexicon in enumerate(lexicon_list):
+        for phrase, count in lexicon.items():
+            if count[0]>0 and count[1]/count[0]<0.1:
+                del lexicon[phrase]
+        shortest_phrase = min(lexicon.iterkeys(), key=lambda phrase: len(phrase))
+        print "%12s %8d %s" % (lexicon_meta_list[index]["ne"], len(lexicon), shortest_phrase)
         
-    for index, meta in enumerate(lexicon_meta_list):
-        with codecs.open(meta["path"], "w", encoding="iso8859-15") as f:
-            for phrase in index_to_lexicon[index]:
+    for index, lexicon in enumerate(lexicon_list):
+        meta = lexicon_meta_list[index]
+        with codecs.open(meta["clean"], "w", encoding=meta["encoding"]) as f:
+            for phrase in sorted(lexicon.iterkeys()):
                 f.write("%s\n" % phrase)
     return
 
@@ -194,7 +221,7 @@ def extract_glove_embeddings():
     return
 
 def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
-        character_to_index, word_to_index, pos_to_index, index_to_lexicon,
+        character_to_index, word_to_index, pos_to_index, lexicon_list,
         pos_count, ne_count, pos_ne_count, lexicon_hits, span_to_node):
     pos = tree.label
     word = tree.word
@@ -227,11 +254,11 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
     span_to_node[span] = node
     
     # Process lexicon info
-    node.lexicon_hit = [0] * len(index_to_lexicon)
+    node.lexicon_hit = [0] * len(lexicon_list)
     hits = 0
-    for index, lexicon in index_to_lexicon.iteritems():
+    for index, lexicon in enumerate(lexicon_list):
         if constituent in lexicon:
-            #lexicon[constituent] += 1
+            lexicon[constituent] += 1
             node.lexicon_hit[index] = 1
             hits = 1
     lexicon_hits[0] += hits
@@ -259,12 +286,12 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
         child = Node()
         node.add_child(child)
         child_nodes = construct_node(child, subtree, ner_raw_data, head_raw_data, text_raw_data,
-            character_to_index, word_to_index, pos_to_index, index_to_lexicon,
+            character_to_index, word_to_index, pos_to_index, lexicon_list,
             pos_count, ne_count, pos_ne_count, lexicon_hits, span_to_node)
         nodes += child_nodes
     return nodes
 
-def create_dense_nodes(ner_raw_data, text_raw_data, pos_to_index, index_to_lexicon,
+def create_dense_nodes(ner_raw_data, text_raw_data, pos_to_index, lexicon_list,
         pos_count, ne_count, pos_ne_count, lexicon_hits, span_to_node):
     node_list = []
     max_dense_span = 3
@@ -300,18 +327,18 @@ def create_dense_nodes(ner_raw_data, text_raw_data, pos_to_index, index_to_lexic
                 pos_ne_count[pos] += 1
             
             # lexicon
-            node.lexicon_hit = [0] * len(index_to_lexicon)
+            node.lexicon_hit = [0] * len(lexicon_list)
             hits = 0
-            for index, lexicon in index_to_lexicon.iteritems():
+            for index, lexicon in enumerate(lexicon_list):
                 if constituent in lexicon:
-                    #lexicon[constituent] += 1
+                    lexicon[constituent] += 1
                     node.lexicon_hit[index] = 1
                     hits = 1
             lexicon_hits[0] += hits
     
     return node_list
     
-def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index, index_to_lexicon):
+def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index, lexicon_list):
     log("get_tree_data()...")
     """ Get tree structured data from CoNLL 2012
     
@@ -343,7 +370,7 @@ def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index, ind
                 span_to_node = {}
                 nodes = construct_node(
                    root_node, parse, ner_raw_data[index], head_raw_data, text_raw_data,
-                   character_to_index, word_to_index, pos_to_index, index_to_lexicon,
+                   character_to_index, word_to_index, pos_to_index, lexicon_list,
                    pos_count, ne_count, pos_ne_count, lexicon_hits, span_to_node)
                 root_node.nodes = nodes
                 root_node.tokens = len(text_raw_data)
@@ -352,7 +379,7 @@ def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index, ind
                 """
                 additional_node_list = create_dense_nodes(
                     ner_raw_data[index], text_raw_data,
-                    pos_to_index, index_to_lexicon,
+                    pos_to_index, lexicon_list,
                     pos_count, ne_count, pos_ne_count, lexicon_hits, span_to_node)
                 """
                 tree_pyramid_list.append((root_node, additional_node_list))
@@ -397,18 +424,15 @@ def read_dataset(data_split_list = ["train", "validate", "test"]):
     pos_to_index["NONE"] = len(pos_to_index)
     
     # Read lexicon
-    index_to_lexicon = {}
-    for index, meta in enumerate(lexicon_meta_list):
-        #_, index_to_lexicon[index] = read_list_file(meta["path"], "iso8859-15")
-        if "senna" in meta:
-            _, index_to_lexicon[index] = read_list_file(meta["senna"], "iso8859-15")
-        elif "dbpedia" in meta:
-            _, index_to_lexicon[index] = read_list_file(meta["dbpedia"])
-    """
-    for index, lexicon in index_to_lexicon.iteritems():
-        for name in lexicon:
-            lexicon[name] = 0
-    """
+    lexicon_list = []
+    for meta in lexicon_meta_list:
+        lexicon_list.append(read_list_file(meta["raw"], encoding=meta["encoding"])[1])
+        #lexicon_list.append(read_list_file(meta["clean"], encoding=meta["encoding"])[1])
+    
+    for lexicon in lexicon_list:
+        for phrase in lexicon:
+            lexicon[phrase] = 0
+    
     # Build a tree structure for each sentence
     data = {}
     word_count = {}
@@ -420,16 +444,16 @@ def read_dataset(data_split_list = ["train", "validate", "test"]):
         (tree_pyramid_list, ner_list,
             word_count[split], pos_count[split], ne_count[split], pos_ne_count[split],
             lexicon_hits[split]) = get_tree_data(raw_data[split],
-                character_to_index, word_to_index, pos_to_index, index_to_lexicon)
+                character_to_index, word_to_index, pos_to_index, lexicon_list)
         #data[split] = [tree_list, ner_list]
         data[split] = {"tree_pyramid_list": tree_pyramid_list, "ner_list": ner_list}
-    """
-    for index, lexicon in index_to_lexicon.iteritems():
+    
+    for index, lexicon in enumerate(lexicon_list):
         with codecs.open("tmp_%d.txt" % index, "w", encoding="utf8") as f:
-            for name, count in sorted(lexicon.iteritems(), key=lambda x: (-x[1], x[0])):
+            for phrase, count in sorted(lexicon.iteritems(), key=lambda x: (-x[1], x[0])):
                 if count == 0: break
-                f.write("%9d %s\n" % (count, name))
-    """
+                f.write("%9d %s\n" % (count, phrase))
+    
     # Show statistics of each data split 
     print "-" * 80
     print "%10s%10s%9s%9s%7s%12s%13s" % ("split", "sentence", "token", "node", "NE", "spanned_NE",
@@ -489,12 +513,12 @@ def read_dataset(data_split_list = ["train", "validate", "test"]):
                 node.y = ne_to_index[node.ne]
     
     return (data, word_list, ne_list,
-            len(character_to_index), len(pos_to_index), len(ne_to_index), len(index_to_lexicon))
+            len(character_to_index), len(pos_to_index), len(ne_to_index), len(lexicon_list))
 
 if __name__ == "__main__":
     #extract_vocabulary_and_alphabet()
     #extract_glove_embeddings()
-    #extract_clean_senna_lexicon()
+    #extract_clean_lexicon()
     read_dataset()
     exit()
     
