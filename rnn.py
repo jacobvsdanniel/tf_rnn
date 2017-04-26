@@ -4,11 +4,12 @@ import numpy as np
 import tensorflow as tf
 
 class Node(object):
-    def __init__(self):
+    def __init__(self, family=0):
         self.child_list = []
         self.parent = None
         self.left = None
         self.right = None
+        self.family = family
         
     def add_child(self, child):
         if self.child_list:
@@ -36,13 +37,16 @@ class Config(object):
         self.lexicons = 4
         
         self.pos_dimension = 5
-        self.hidden_dimension = 450
+        self.hidden_dimension = 300
         self.output_dimension = 2
         
         self.degree = 2
         self.poses = 3
         self.words = 4
         self.neighbors = 3
+        
+        self.families = 2
+        self.hidden_layers = 3
         
         self.learning_rate = 1e-4
         self.epsilon = 1e-2
@@ -87,6 +91,7 @@ class RNN(object):
         # Create placeholders
         self.e   = tf.placeholder(tf.float32, [None, None])
         self.y   = tf.placeholder(  tf.int32, [None, None])
+        self.f   = tf.placeholder(  tf.int32, [None, None])
         self.T   = tf.placeholder(  tf.int32, [None, None, self.degree+3])
         self.p   = tf.placeholder(  tf.int32, [None, None, self.poses])
         self.x   = tf.placeholder(  tf.int32, [None, None, self.words])
@@ -234,24 +239,32 @@ class RNN(object):
     def get_hidden_unit(self, name, degree):
         """ Create a unit to compute the hidden features of one direction of a node
         """
-        self.input_dimension = (self.pos_dimension * self.poses 
-                              + self.word_dimension * (1+self.words)
-                              + self.lexicons
-                              + self.hidden_dimension * degree)
-        #self.input_dimension = self.lexicons
-        
+        self.raw_features = (self.pos_dimension * self.poses 
+                           + self.word_dimension * (1+self.words)
+                           + self.lexicons)
+                           
         self.W[name] = {}
         self.b[name] = {}
         with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
             with tf.variable_scope(name):
-                self.W[name]["h"] = tf.get_variable("W_h",
-                                        [self.input_dimension, self.hidden_dimension])
-                self.b[name]["h"] = tf.get_variable("b_h", [1, self.hidden_dimension])
+                for i in xrange(self.hidden_layers):
+                    if i == 0:
+                        input_dimension = self.hidden_dimension * degree + self.raw_features
+                    else:
+                        input_dimension = self.hidden_dimension * (degree + 1)
+                    self.W[name]["h%d"%i] = tf.get_variable("W_h%d"%i,
+                                                [input_dimension, self.hidden_dimension])
+                    self.b[name]["h%d"%i] = tf.get_variable("b_h%d"%i, [1, self.hidden_dimension])
                 
-        def hidden_unit(x):
-            h = tf.matmul(x, self.W[name]["h"]) + self.b[name]["h"]
-            h = tf.nn.relu(h)
-            return h
+        def hidden_unit(x, c):
+            h = x
+            ret = []
+            for i in xrange(self.hidden_layers):
+                h = tf.concat([h, c[:,i,:]], 1)
+                h = tf.matmul(h, self.W[name]["h%d"%i]) + self.b[name]["h%d"%i]
+                h = tf.nn.relu(h)
+                ret.append(h)
+            return tf.stack(ret, 1)
         return hidden_unit
     """    
     def get_hidden_unit(self, name, degree):
@@ -291,8 +304,10 @@ class RNN(object):
         #self.f_h_bottom = self.get_hidden_unit("hidden_bottom", self.degree)
         self.f_h_bottom = self.get_hidden_unit("hidden_bottom", 1)
         self.f_h_top = self.get_hidden_unit("hidden_top", 1)
+        #self.f_h_bottom_2 = self.get_hidden_unit("hidden_bottom_2", 1)
+        #self.f_h_top_2 = self.get_hidden_unit("hidden_top_2", 1)
         
-        H = tf.zeros([(1+self.nodes) * self.samples, self.hidden_dimension])
+        H = tf.zeros([(1+self.nodes) * self.samples, self.hidden_layers, self.hidden_dimension])
         
         # Bottom-up
         def bottom_condition(index, H):
@@ -306,13 +321,17 @@ class RNN(object):
             c = tf.reduce_sum(tf.gather(H, t[0,:,:]), axis=1)
             #c = tf.reshape(tf.gather(H, t[0,:,:]), [self.samples, self.degree*self.hidden_dimension])
             
-            h = self.f_h_bottom(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], lex[0,:,:], c]))
-            #h = self.f_h_bottom(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], lex[0,:,:]]), c)
+            # h = tf.where(tf.equal(self.f[index], 0),
+                    # self.f_h_bottom(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], lex[0,:,:], c])),
+                    # self.f_h_bottom_2(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], lex[0,:,:], c]))
+                # )
+            #h = self.f_h_bottom(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], lex[0,:,:], c]))
+            h = self.f_h_bottom(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], lex[0,:,:]]), c)
             #h = self.f_h_bottom(lex[0,:,:])
             h = tf.nn.dropout(h, self.krH)
             
-            h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
-            h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_dimension])
+            h_upper = tf.zeros([(1+index)*self.samples, self.hidden_layers, self.hidden_dimension])
+            h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_layers, self.hidden_dimension])
             return index+1, H+tf.concat(axis=0, values=[h_upper, h, h_lower])
         _, H_bottom = tf.while_loop(bottom_condition, bottom_body, [tf.constant(0), H], parallel_iterations=1)
         
@@ -329,18 +348,22 @@ class RNN(object):
             #t = tf.slice(self.T_hat, [index,0,self.degree+2], [1, self.samples, 2])
             #c = tf.reshape(tf.gather(H, t[0,:,:]), [self.samples, 2*self.hidden_dimension])
             
-            h = self.f_h_top(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], lex[0,:,:], c]))
-            #h = self.f_h_top(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], lex[0,:,:]]), c)
+            # h = tf.where(tf.equal(self.f[index], 0),
+                    # self.f_h_top(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], lex[0,:,:], c])),
+                    # self.f_h_top_2(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], lex[0,:,:], c]))
+                # )
+            #h = self.f_h_top(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], lex[0,:,:], c]))
+            h = self.f_h_top(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], lex[0,:,:]]), c)
             #h = self.f_h_top(lex[0,:,:])
             h = tf.nn.dropout(h, self.krR)
             
-            h_upper = tf.zeros([(1+index)*self.samples, self.hidden_dimension])
-            h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_dimension])
+            h_upper = tf.zeros([(1+index)*self.samples, self.hidden_layers, self.hidden_dimension])
+            h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_layers, self.hidden_dimension])
             return index-1, H+tf.concat(axis=0, values=[h_upper, h, h_lower])
         _, H_top = tf.while_loop(top_condition, top_body, [self.nodes-1, H], parallel_iterations=1)
         #_, H_top = tf.while_loop(top_condition, top_body, [self.nodes-1, H_bottom])
         
-        self.H = H_bottom + H_top
+        self.H = H_bottom[:,self.hidden_layers-1,:] + H_top[:,self.hidden_layers-1,:]
         #self.H = tf.concat(axis=1, values=[H_bottom, H_top])
         #self.H = H_bottom
         #self.H = H_top
@@ -420,6 +443,7 @@ class RNN(object):
         N = []
         e = []
         y = []
+        f = []
         T = []
         p = []
         x = []
@@ -429,10 +453,10 @@ class RNN(object):
         l = 0
         for node in node_list:
             N.append(node)
-            
             e.append(1)
-            
+            #e.append(.5 if node.y==self.output_dimension-1 else 1)
             y.append(node.y)
+            f.append(node.family)
             
             child_index_list = [child.index for child in node.child_list]
             T.append(child_index_list
@@ -466,6 +490,7 @@ class RNN(object):
         N   = np.array(N)
         e   = np.array(  e, dtype=np.float32)
         y   = np.array(  y, dtype=np.int32)
+        f   = np.array(  f, dtype=np.int32)
         T   = np.array(  T, dtype=np.int32)
         p   = np.array(  p, dtype=np.int32)
         x   = np.array(  x, dtype=np.int32)
@@ -473,7 +498,7 @@ class RNN(object):
         lex = np.array(lex, dtype=np.float32)
         S   = np.array(  S, dtype=np.int32)
         
-        return N, e, y, T, p, x, w, lex, S, l, tree.index, tree.tokens
+        return N, e, y, f, T, p, x, w, lex, S, l, tree.index, tree.tokens
             
     def get_batch_input(self, tree_pyramid_list):
         """ Preprocessing: Get batched data structures for the input layer from input trees
@@ -487,11 +512,12 @@ class RNN(object):
         N   =      np.zeros([nodes, samples                              ], dtype=np.object)
         e   =      np.zeros([nodes, samples                              ], dtype=np.float32)
         y   = -1 * np.ones( [nodes, samples                              ], dtype=np.int32)
+        f   =      np.zeros([nodes, samples                              ], dtype=np.int32)
         T   = -1 * np.ones( [nodes, samples, self.degree+3               ], dtype=np.int32)
         p   = -1 * np.ones( [nodes, samples, self.poses                  ], dtype=np.int32)
         x   = -1 * np.ones( [nodes, samples, self.words                  ], dtype=np.int32)
         w   = -3 * np.ones( [nodes, samples, self.words, self.word_length], dtype=np.int32)
-        lex =      np.zeros([nodes, samples, self.lexicons                ], dtype=np.float32)
+        lex =      np.zeros([nodes, samples, self.lexicons               ], dtype=np.float32)
         S   = -1 * np.ones( [nodes, samples, self.neighbors              ], dtype=np.int32)
         l   =      np.zeros(        samples                               , dtype=np.float32)
         r   =      np.zeros(        samples                               , dtype=np.int32)
@@ -502,6 +528,7 @@ class RNN(object):
             (     N[:n, sample      ],
                   e[:n, sample      ],
                   y[:n, sample      ],
+                  f[:n, sample      ],
                   T[:n, sample, :   ],
                   p[:n, sample, :   ],
                   x[:n, sample, :   ],
@@ -511,15 +538,15 @@ class RNN(object):
                   l[    sample      ],
                   r[    sample      ],
              tokens[    sample      ]) = sample_input
-        return N, e, y, T, p, x, w, lex, S, l, r, tokens
+        return N, e, y, f, T, p, x, w, lex, S, l, r, tokens
         
     def train(self, tree_pyramid_list):
         """ Update parameters from a batch of trees with labeled nodes
         """
-        _, e, y, T, p, x, w, lex, S, l, _, _ = self.get_batch_input(tree_pyramid_list)
+        _, e, y, f, T, p, x, w, lex, S, l, _, _ = self.get_batch_input(tree_pyramid_list)
         
         loss, _ = self.sess.run([self.loss, self.update_op],
-                    feed_dict={self.e: e, self.y: y, self.T: T,
+                    feed_dict={self.e: e, self.y: y, self.f: f, self.T: T,
                                self.p: p, self.x: x, self.w: w, self.lex: lex,
                                self.S: S, self.l: l,
                                self.krP: self.keep_rate_P, self.krX: self.keep_rate_X,
@@ -531,10 +558,10 @@ class RNN(object):
         
         Spans that are contained by other positive spans are ignored.
         """
-        N, e, _, T, p, x, w, lex, S, l, r, tokens = self.get_batch_input(tree_pyramid_list)
+        N, e, _, f, T, p, x, w, lex, S, l, r, tokens = self.get_batch_input(tree_pyramid_list)
         
         y_hat = self.sess.run(self.y_hat,
-                    feed_dict={self.T: T, 
+                    feed_dict={self.f: f, self.T: T, 
                                self.p: p, self.x: x, self.w: w, self.lex: lex,
                                self.S: S, self.l: l,
                                self.krP: 1.0, self.krX: 1.0,
@@ -564,7 +591,7 @@ class RNN(object):
             
             # Get span to positive y prediction of pyramids in top-down orders
             for i in xrange(T.shape[0]-1, -1, -1):
-                if e[i][sample_index] == 1:
+                if e[i][sample_index] > 0:
                     pyramid_top_index = i
                     break
             for node_index in xrange(pyramid_top_index, r[sample_index], -1):

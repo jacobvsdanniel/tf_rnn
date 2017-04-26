@@ -82,6 +82,27 @@ def extract_vocabulary_and_alphabet():
     log(" done\n")
     return
 
+def extract_glove_embeddings():
+    log("extract_glove_embeddings()...")
+    
+    _, word_to_index = read_list_file(word_file)
+    word_list = []
+    embedding_list = []
+    with open(glove_file, "r") as f:
+        for line in f:
+            line = line.strip().split()
+            word = line[0]
+            if word not in word_to_index: continue
+            embedding = np.array([float(i) for i in line[1:]])
+            word_list.append(word)
+            embedding_list.append(embedding)
+    
+    np.save(pretrained_word_file, word_list)
+    np.save(pretrained_embedding_file, embedding_list)
+    
+    log(" %d pre-trained words\n" % len(word_list))
+    return
+    
 def traverse_tree(tree, ner_raw_data, head_raw_data, text_raw_data, lexicon_list, span_set):
     pos = tree.label
     span = tree.span
@@ -199,27 +220,6 @@ def extract_clean_lexicon():
                 f.write("%s\n" % phrase)
     return
 
-def extract_glove_embeddings():
-    log("extract_glove_embeddings()...")
-    
-    _, word_to_index = read_list_file(word_file)
-    word_list = []
-    embedding_list = []
-    with open(glove_file, "r") as f:
-        for line in f:
-            line = line.strip().split()
-            word = line[0]
-            if word not in word_to_index: continue
-            embedding = np.array([float(i) for i in line[1:]])
-            word_list.append(word)
-            embedding_list.append(embedding)
-    
-    np.save(pretrained_word_file, word_list)
-    np.save(pretrained_embedding_file, embedding_list)
-    
-    log(" %d pre-trained words\n" % len(word_list))
-    return
-
 def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
         character_to_index, word_to_index, pos_to_index, lexicon_list,
         pos_count, ne_count, pos_ne_count, lexicon_hits, span_to_node):
@@ -306,7 +306,7 @@ def create_dense_nodes(ner_raw_data, text_raw_data, pos_to_index, lexicon_list,
             
             # span, child
             # TODO: sibling
-            node = Node()
+            node = Node(family=1)
             node_list.append(node)
             node.span = span
             span_to_node[span] = node

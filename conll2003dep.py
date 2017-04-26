@@ -386,7 +386,7 @@ def create_dense_nodes(ner_raw_data, text_raw_data, pos_to_index, lexicon_list,
             
             # span, child
             # TODO: sibling
-            node = Node()
+            node = Node(family=1)
             node_list.append(node)
             node.span = span
             span_to_node[span] = node

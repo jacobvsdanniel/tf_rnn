@@ -9,7 +9,7 @@ import tensorflow as tf
 
 import rnn
 
-batch_nodes = 1000
+batch_nodes = 500
 batch_trees = 16
 patience = 20
 max_epoches = 100
@@ -112,6 +112,7 @@ def train_an_epoch(model, tree_pyramid_list):
     loss = 0.
     for i, batch in enumerate(batch_list):
         _, tree_pyramid_list = zip(*batch)
+        #print "YOLO %d %d" % (tree_pyramid_list[-1][0].nodes, len(tree_pyramid_list[-1][1]))
         loss += model.train(tree_pyramid_list)
         trees += len(batch)
         sys.stdout.write("\r(%5d/%5d) average loss %.3f   " % (trees, total_trees, loss/trees))
