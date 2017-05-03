@@ -165,20 +165,15 @@ def evaluate_prediction(ner_list, ner_hat_list):
     
     return precision*100, recall*100, f1*100
     
-def train_model(dataset):
+def train_model(dataset, pretrain):
     """ Update model parameters until it converges or reaches maximum epochs
     """
-    if os.path.isfile("keep_training.model"):
-        load_existing_model = True
-    else:
-        load_existing_model = False
-        
     data, ne_list, model = load_data_and_initialize_model(dataset,
-        use_pretrained_embedding=not load_existing_model)
+        use_pretrained_embedding=not pretrain)
     
     saver = tf.train.Saver()
-    if load_existing_model:
-        saver.restore(model.sess, "./keep_training.model")
+    if pretrain:
+        saver.restore(model.sess, "./tmp.model")
     
     best_epoch = 0
     best_score = (-1, -1, -1)
@@ -232,10 +227,11 @@ def main():
         choices=["train", "validate", "test"])
     parser.add_argument("-d", dest="dataset", default="ontonotes",
         choices=["ontonotes", "ontochinese", "conll2003", "conll2003dep"])
+    parser.add_argument("-p", dest="pretrain", action="store_true")
     arg = parser.parse_args()
     
     if arg.mode == "train":
-        train_model(arg.dataset)
+        train_model(arg.dataset, arg.pretrain)
     elif arg.mode == "evaluate":
         evaluate_model(arg.dataset, arg.split)
     return
