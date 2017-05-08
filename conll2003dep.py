@@ -442,7 +442,6 @@ def get_tree_data(sentence_list, parse_list, ner_list,
             character_to_index, word_to_index, pos_to_index, lexicon_list,
             pos_count, ne_count, pos_ne_count, lexicon_hits, span_to_node)
         parse.nodes = nodes
-        parse.tokens = len(text_raw_data)
                 
         #additional_node_list = []
         additional_node_list = create_dense_nodes(

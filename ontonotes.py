@@ -222,7 +222,7 @@ def extract_clean_lexicon():
 
 def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
         character_to_index, word_to_index, pos_to_index, lexicon_list,
-        pos_count, ne_count, pos_ne_count, lexicon_hits, span_to_node):
+        pos_count, ne_count, pos_ne_count, lexicon_hits, span_to_node, under_ne):
     pos = tree.label
     word = tree.word
     span = tree.span
@@ -243,12 +243,21 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
     node.head_index = word_to_index[head]
     
     # Process ne info
+    node.under_ne = under_ne
     node.ne = ne
     if ne != "NONE":
+        under_ne = True
         if not node.parent or node.parent.span!=span:
             ne_count[ne] += 1
         pos_ne_count[pos] += 1
-    
+        """
+        if hasattr(tree, "head"):
+            print " ".join(text_raw_data)
+            print " ".join(text_raw_data[span[0]:span[1]])
+            print ne
+            print node.parent.head
+            raw_input()
+        """
     # Process span info
     node.span = span
     span_to_node[span] = node
@@ -287,7 +296,7 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
         node.add_child(child)
         child_nodes = construct_node(child, subtree, ner_raw_data, head_raw_data, text_raw_data,
             character_to_index, word_to_index, pos_to_index, lexicon_list,
-            pos_count, ne_count, pos_ne_count, lexicon_hits, span_to_node)
+            pos_count, ne_count, pos_ne_count, lexicon_hits, span_to_node, under_ne)
         nodes += child_nodes
     return nodes
 
@@ -371,9 +380,8 @@ def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index, lex
                 nodes = construct_node(
                    root_node, parse, ner_raw_data[index], head_raw_data, text_raw_data,
                    character_to_index, word_to_index, pos_to_index, lexicon_list,
-                   pos_count, ne_count, pos_ne_count, lexicon_hits, span_to_node)
+                   pos_count, ne_count, pos_ne_count, lexicon_hits, span_to_node, False)
                 root_node.nodes = nodes
-                root_node.tokens = len(text_raw_data)
                 
                 additional_node_list = []
                 """
