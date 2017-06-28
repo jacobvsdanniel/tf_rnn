@@ -53,7 +53,6 @@ class Config(object):
         self.keep_rate_P = 0.65
         self.keep_rate_X = 0.65
         self.keep_rate_H = 0.65
-        self.keep_rate_R = 0.65
         return
         
 class RNN(object):
@@ -101,7 +100,6 @@ class RNN(object):
         self.krP = tf.placeholder(tf.float32)
         self.krX = tf.placeholder(tf.float32)
         self.krH = tf.placeholder(tf.float32)
-        self.krR = tf.placeholder(tf.float32)
         
         self.nodes = tf.shape(self.T)[0]
         self.samples = tf.shape(self.T)[1]
@@ -346,7 +344,7 @@ class RNN(object):
                     # self.f_h_top_2(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], lex[0,:,:], c]))
                 # )
             h = self.f_h_top(tf.concat(axis=1, values=[self.m, p[0,:,:], x[0,:,:], lex[0,:,:]]), c)
-            h = tf.nn.dropout(h, self.krR)
+            h = tf.nn.dropout(h, self.krH)
             
             h_upper = tf.zeros([(1+index)*self.samples, self.hidden_layers, self.hidden_dimension])
             h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_layers, self.hidden_dimension])
@@ -537,7 +535,7 @@ class RNN(object):
                     feed_dict={self.e: e, self.y: y, self.f: f, self.T: T,
                                self.p: p, self.x: x, self.w: w, self.lex: lex, self.l: l,
                                self.krP: self.keep_rate_P, self.krX: self.keep_rate_X,
-                               self.krH: self.keep_rate_H, self.krR: self.keep_rate_R})
+                               self.krH: self.keep_rate_H})
         return loss
     
     def predict(self, tree_pyramid_list):
@@ -551,7 +549,7 @@ class RNN(object):
                     feed_dict={self.f: f, self.T: T, 
                                self.p: p, self.x: x, self.w: w, self.lex: lex, self.l: l,
                                self.krP: 1.0, self.krX: 1.0,
-                               self.krH: 1.0, self.krR: 1.0})
+                               self.krH: 1.0})
         
         def parse_output(node_index, sample_index, span_y, uncovered_token_set):
             node = N[node_index][sample_index]

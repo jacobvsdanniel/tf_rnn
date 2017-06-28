@@ -75,6 +75,11 @@ def load_data_and_initialize_model(dataset, split_list=["train", "validate", "te
     
     # Initialize a model
     model = rnn.RNN(config)
+    """
+    tf_config = tf.ConfigProto()
+    tf_config.gpu_options.allow_growth = True
+    model.sess = tf.Session(config=tf_config)
+    """
     model.sess = tf.Session()
     model.sess.run(tf.global_variables_initializer())
     if use_pretrained_embedding: load_embedding(model, word_list, dataset)
@@ -100,6 +105,7 @@ def make_batch_list(tree_pyramid_list):
     batch_list.append(batch)
     
     random.shuffle(batch_list)
+    #batch_list = batch_list[::-1]
     return batch_list
     
 def train_an_epoch(model, tree_pyramid_list):
@@ -183,11 +189,12 @@ def train_model(dataset, pretrain):
         
         start_time = time.time()
         loss = train_an_epoch(model, data["train"]["tree_pyramid_list"])
-        print "[train] average loss %.3f; elapsed %.0fs" % (loss, time.time() - start_time)
+        print "[train] average loss %.3f; elapsed %.0fs" % (loss, time.time()-start_time)
         
+        start_time = time.time()
         ner_hat_list = predict_dataset(model, data["validate"]["tree_pyramid_list"], ne_list)
         score = evaluate_prediction(data["validate"]["ner_list"], ner_hat_list)
-        print "[validate] precision=%.1f%% recall=%.1f%% f1=%.3f%%" % score,
+        print "[validate] precision=%.1f%% recall=%.1f%% f1=%.3f%%; elapsed %.0fs" % (score+(time.time()-start_time,)),
         
         if best_score[2] < score[2]:
             print "best"
