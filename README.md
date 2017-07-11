@@ -7,14 +7,15 @@ ontonotes.py # utilities to extract the OntoNotes 5.0 dataset
 ```
 
 ## How to set up the OntoNotes 5.0 dataset
-1) Get the dataset
+1) Get data
 
-We download it from CoNLL-2012 website.
-
-Set its path in ontonotes.py
+Download OntoNotes 5.0 from CoNLL-2012 website.
+Download SENNA from Collobert's website.
+Set their paths in ontonotes.py
 ```python
 data_path_prefix = "/home/danniel/Desktop/CONLL2012-intern/conll-2012/v4/data"
 test_auto_data_path_prefix = "/home/danniel/Downloads/wu_conll_test/v9/data"
+senna_path = "/home/danniel/Downloads/senna/hash"
 ```
 
 2) Get the load data helpers
