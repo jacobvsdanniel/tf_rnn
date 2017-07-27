@@ -22,9 +22,9 @@ senna_path = "/home/danniel/Downloads/senna/hash"
 
 ### 2. Get the load data helpers
 
-They are provided to us by Jheng-Long Wu (jlwu@iis.sinica.edu.tw).
+The "external/" directory contains libraries that reads the CoNLL-2012 format of OntoNotes (Provided by Jheng-Long Wu, jlwu@iis.sinica.edu.tw). They in turn use libraries from https://github.com/canasai/mps. Download missing files from that repository  when import errors occur.
 
-Import them in ontonotes.py
+Set custom path and import them in ontonotes.py
 ```python
 sys.path.append("/home/danniel/Desktop/CONLL2012-intern")
 from load_conll import load_data
@@ -35,7 +35,7 @@ from pstree import PSTree
 
 Download them from the GloVe website.
 
-Set their path in ontonotes.py
+Set custom path in ontonotes.py
 ```python
 glove_file = "/home/danniel/Downloads/glove.840B.300d.txt"
 ```
