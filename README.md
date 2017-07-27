@@ -13,7 +13,7 @@ Download OntoNotes 5.0 from CoNLL-2012 website.
 
 Download SENNA from Collobert's website.
 
-Set their paths in ontonotes.py
+Set their custom paths in ontonotes.py
 ```python
 data_path_prefix = "/home/danniel/Desktop/CONLL2012-intern/conll-2012/v4/data"
 test_auto_data_path_prefix = "/home/danniel/Downloads/wu_conll_test/v9/data"
@@ -22,9 +22,9 @@ senna_path = "/home/danniel/Downloads/senna/hash"
 
 ### 2. Get the load data helpers
 
-The "external/" directory contains libraries that read the CoNLL-2012 format of OntoNotes (Provided by Jheng-Long Wu, jlwu@iis.sinica.edu.tw). They in turn use libraries from https://github.com/canasai/mps. Download missing files from that repository  when import errors occur.
+The "load_conll_2012/" directory contains libraries to read the CoNLL-2012 format of OntoNotes. They are provided by Jheng-Long Wu (jlwu@iis.sinica.edu.tw) and Canasai (https://github.com/canasai/mps).
 
-Set custom path and import them in ontonotes.py
+Set the custom path to import them in ontonotes.py
 ```python
 sys.path.append("/home/danniel/Desktop/CONLL2012-intern")
 from load_conll import load_data
@@ -35,7 +35,7 @@ from pstree import PSTree
 
 Download them from the GloVe website.
 
-Set custom path in ontonotes.py
+Set the custom path in ontonotes.py
 ```python
 glove_file = "/home/danniel/Downloads/glove.840B.300d.txt"
 ```
