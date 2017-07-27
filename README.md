@@ -22,7 +22,7 @@ senna_path = "/home/danniel/Downloads/senna/hash"
 
 ### 2. Get the load data helpers
 
-The "external/" directory contains libraries that reads the CoNLL-2012 format of OntoNotes (Provided by Jheng-Long Wu, jlwu@iis.sinica.edu.tw). They in turn use libraries from https://github.com/canasai/mps. Download missing files from that repository  when import errors occur.
+The "external/" directory contains libraries that read the CoNLL-2012 format of OntoNotes (Provided by Jheng-Long Wu, jlwu@iis.sinica.edu.tw). They in turn use libraries from https://github.com/canasai/mps. Download missing files from that repository  when import errors occur.
 
 Set custom path and import them in ontonotes.py
 ```python
