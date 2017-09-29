@@ -1,5 +1,5 @@
 # TF_RNN
-This repository contains a special Bidirectional Recursive Neural Network implemented with Tensorflow.
+This repository contains a special Bidirectional Recursive Neural Network implemented with Tensorflow described in [1](#leveraging-linguistic-structures-for-named-entity-recognition-with-bidirectional-recursive-neural-networks).
 ```python
 rnn.py # containing the RNN model class
 evaluate.py # the training and testing script
@@ -70,4 +70,22 @@ python evaluate.py -m evaluate -s test 2> tmp.txt
 To see all options, run
 ```
 python evaluate.py -h
+```
+
+## References
+The high-level description of the project and the evaluation results can be found in [1](#leveraging-linguistic-structures-for-named-entity-recognition-with-bidirectional-recursive-neural-networks).
+
+### Leveraging Linguistic Structures for Named Entity Recognition with Bidirectional Recursive Neural Networks
+
+[1] PH Li, RP Dong, YS Wang, JC Chou, WY Ma, [*Leveraging Linguistic Structures for Named Entity Recognition with Bidirectional Recursive Neural Networks*](http://aclweb.org/anthology/D/D17/D17-1281.pdf)
+
+```
+@InProceedings{li-EtAl:2017:EMNLP20177,
+  author    = {Li, Peng-Hsuan  and  Dong, Ruo-Ping  and  Wang, Yu-Siang  and  Chou, Ju-Chieh  and  Ma, Wei-Yun},
+  title     = {Leveraging Linguistic Structures for Named Entity Recognition with Bidirectional Recursive Neural Networks},
+  booktitle = {Proceedings of the 2017 Conference on Empirical Methods in Natural Language Processing},
+  year      = {2017},
+  publisher = {Association for Computational Linguistics},
+  pages     = {2654--2659}
+}
 ```
