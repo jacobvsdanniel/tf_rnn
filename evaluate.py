@@ -194,7 +194,7 @@ def train_model(dataset, pretrain):
         start_time = time.time()
         ner_hat_list = predict_dataset(model, data["validate"]["tree_pyramid_list"], ne_list)
         score = evaluate_prediction(data["validate"]["ner_list"], ner_hat_list)
-        print "[validate] precision=%.1f%% recall=%.1f%% f1=%.3f%%; elapsed %.0fs" % (score+(time.time()-start_time,)),
+        print "[validate] precision=%.1f%% recall=%.1f%% f1=%.3f%%; elapsed %.0fs;" % (score+(time.time()-start_time,)),
         
         if best_score[2] < score[2]:
             print "best"
@@ -202,7 +202,8 @@ def train_model(dataset, pretrain):
             best_score = score
             best_loss = loss
             saver.save(model.sess, "tmp.model")
-        else: print ""
+        else:
+            print "worse #%d" % (epoch-best_epoch)
         if epoch-best_epoch >= patience: break
     
     print "\n<Best Epoch %d>" % best_epoch
