@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import random
+import codecs
 import argparse
 
 import numpy as np
@@ -215,6 +216,87 @@ def train_model(dataset, pretrain):
     print "[test] precision=%.1f%% recall=%.1f%% f1=%.3f%%" % score
     return
 
+def ner_diff(ner_a_list, ner_b_list):
+    """
+    Compute the differences of two ner predictions
+    
+    ner_list: a list of the ner prediction of each sentence
+    ner: a dict of span-ne pairs
+    """
+    sentences = len(ner_a_list)
+    print "%d sentences" % sentences
+    print "a: %d nes" % sum(len(ner) for ner in ner_a_list)
+    print "b: %d nes" % sum(len(ner) for ner in ner_b_list)
+    
+    ner_aa_list = []
+    ner_bb_list = []
+    ner_ab_list = []
+    for i in xrange(sentences):
+        ner_aa = {span: ne for span, ne in ner_a_list[i].iteritems()}
+        ner_bb = {span: ne for span, ne in ner_b_list[i].iteritems()}
+        ner_ab = {}
+        for span, ne in ner_aa.items():
+            if span in ner_bb and ner_aa[span] == ner_bb[span]:
+                del ner_aa[span]
+                del ner_bb[span]
+                ner_ab[span] = ne
+        ner_aa_list.append(ner_aa)
+        ner_bb_list.append(ner_bb)
+        ner_ab_list.append(ner_ab)
+    
+    return ner_aa_list, ner_bb_list, ner_ab_list
+    
+def write_ner(target_file, text_raw_data, ner_list):
+    """
+    Write the ner prediction of each sentence to file,
+    indexing the senteces from 0.
+    
+    ner_list: a list of the ner prediction of each sentence
+    ner: a dict of span-ne pairs
+    """
+    print ""
+    print target_file
+    sentences = len(text_raw_data)
+    print "%d sentences" % sentences
+    
+    with codecs.open(target_file, "w", encoding="utf8") as f:
+        for i in xrange(sentences):
+            if len(ner_list[i]) == 0: continue
+            f.write("\n%d\n" % i)
+            f.write("%s\n" % " ".join(text_raw_data[i]))
+            for span, ne in ner_list[i].iteritems():
+                text_chunk = " ".join(text_raw_data[i][span[0]:span[1]])
+                f.write("%d %d %s <%s>\n" % (span[0], span[1], ne, text_chunk))
+    
+    print "%d nes" % sum(len(ner) for ner in ner_list)
+    return
+
+def read_ner(source_file):
+    """
+    Read the ner prediction of each sentence from file,
+    
+    index_ner: a dict of setence index-ner pairs
+    ner: a dict of span-ne pairs
+    """
+    with codecs.open(source_file, "r", encoding="utf8") as f:
+        line_list = f.readlines()
+        
+    index_ner = {}
+    sentence_index = -1
+    line_index = -1
+    while line_index+1 < len(line_list):
+        line_index += 1
+        line = line_list[line_index].strip().split()
+        if not line: continue
+        if len(line) == 1:
+            sentence_index = int(line[0])
+            index_ner[sentence_index] = {}
+            line_index += 1
+        else:
+            l, r, ne = line[:3]
+            index_ner[sentence_index][(int(l),int(r))] = ne
+    return index_ner
+
 def evaluate_model(dataset, split):
     """ Compute the scores of an existing model
     """
@@ -225,23 +307,74 @@ def evaluate_model(dataset, split):
     ner_hat_list = predict_dataset(model, data[split]["tree_pyramid_list"], ne_list)
     score = evaluate_prediction(data[split]["ner_list"], ner_hat_list)
     print "[%s]" % split + " precision=%.1f%% recall=%.1f%% f1=%.3f%%" % score
+    """
+    # YOLO
+    text_raw_data = [tree.text_raw_data for tree, pyramid in data[split]["tree_pyramid_list"]]
+    false_negative, false_positive, correct = ner_diff(data[split]["ner_list"], ner_hat_list)
+    write_ner("bi_fn.txt", text_raw_data, false_negative)
+    write_ner("bi_fp.txt", text_raw_data, false_positive)
+    """
+    return
+
+def compare_model(dataset, split, bad_ner_file, good_ner_file, diff_file):
+    data, ne_list, model = load_data_and_initialize_model(dataset, split_list=[split])
+    text_raw_data = [tree.text_raw_data for tree, pyramid in data[split]["tree_pyramid_list"]]
+    gold_ner_list = data[split]["ner_list"]
+    
+    bad_index_ner = read_ner(bad_ner_file)
+    print "bad: %d nes", sum(len(ner) for index, ner in bad_index_ner.iteritems())
+    good_index_ner = read_ner(good_ner_file)
+    print "good: %d nes", sum(len(ner) for index, ner in good_index_ner.iteritems())
+    
+    index_span = {}
+    for sentence_index in bad_index_ner:
+        bad_ner = bad_index_ner[sentence_index]
+        good_ner = good_index_ner[sentence_index] if sentence_index in good_index_ner else {}
+        gold_ner = gold_ner_list[sentence_index]
+        span_set = set()
+        for span, ne in bad_ner.iteritems():
+            if span not in good_ner:
+                span_set.add(span)
+        if span_set:
+            index_span[sentence_index] = span_set
+    
+    with codecs.open(diff_file, "w", encoding="utf8") as f:
+        for sentence_index, span_set in sorted(index_span.iteritems()):
+            f.write("\n%d\n" % sentence_index)
+            f.write("%s\n" % " ".join(text_raw_data[sentence_index]))
+            for span in span_set:
+                text_chunk = " ".join(text_raw_data[sentence_index][span[0]:span[1]])
+                bad_ne = bad_index_ner[sentence_index][span]
+                gold_ne = gold_ner_list[sentence_index][span] if span in gold_ner_list[sentence_index] else "NONE"
+                f.write("%d %d %s->%s <%s>\n" % (span[0], span[1], bad_ne, gold_ne, text_chunk))
+    return
+
+def show_tree(dataset, split, tree_index):
+    data, _, _ = load_data_and_initialize_model(dataset, split_list=[split])
+    tree = data[split]["tree_pyramid_list"][tree_index][0]
+    tree.show_tree()
     return
     
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-m", dest="mode", default="train",
-        choices=["train", "evaluate"])
+        choices=["train", "evaluate", "compare", "showtree"])
     parser.add_argument("-s", dest="split", default="validate",
         choices=["train", "validate", "test"])
     parser.add_argument("-d", dest="dataset", default="ontonotes",
         choices=["ontonotes", "ontochinese", "conll2003", "conll2003dep"])
     parser.add_argument("-p", dest="pretrain", action="store_true")
+    parser.add_argument("-i", dest="tree_index", default="24")
     arg = parser.parse_args()
     
     if arg.mode == "train":
         train_model(arg.dataset, arg.pretrain)
     elif arg.mode == "evaluate":
         evaluate_model(arg.dataset, arg.split)
+    elif arg.mode == "compare":
+        compare_model(arg.dataset, arg.split, "bot_fp.txt", "bi_fp.txt", "bot_to_bi.txt")
+    elif arg.mode == "showtree":
+        show_tree(arg.dataset, arg.split, int(arg.tree_index))
     return
     
 if __name__ == "__main__":

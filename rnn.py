@@ -10,6 +10,7 @@ class Node(object):
         self.left = None
         self.right = None
         self.family = family
+        return
         
     def add_child(self, child):
         if self.child_list:
@@ -18,12 +19,115 @@ class Node(object):
             child.left = sibling
         self.child_list.append(child)
         child.parent = self
+        return
+        
+    def show_tree(self, depth=0, branch=[]):
+        indent = "    " * depth
+        for i in branch:
+            indent = indent[:i] + "|" + indent[i+1:]
+        print "%s|--%s %s" % (indent, self.pos, self.head)
+        
+        branch2 = [i for i in branch]
+        if self.right:
+            branch2.append(depth*4)
+        elif not self.child_list:
+            print indent
+        
+        for child in self.child_list:
+            child.show_tree(depth+1, branch2)
+        return
 
+class Affine_Layer(object):
+    def __init__(self, name, input_dimension, output_dimension):
+        self.name = name
+        with tf.variable_scope(self.name, initializer=tf.contrib.layers.xavier_initializer()):
+            self.W = tf.get_variable("W", [input_dimension, output_dimension])
+            self.b = tf.get_variable("b", [1, output_dimension])
+        return
+        
+    def transform(self, input_tensor):
+        O = tf.matmul(input_tensor, self.W) + self.b
+        return O
+        
+    def l2_loss(self):
+        l2_loss = tf.nn.l2_loss(self.W) + tf.nn.l2_loss(self.b)
+        return l2_loss
+
+class Child_Sum_LSTM_Layer(object):
+    def __init__(self, name, raw_features, hidden_features):
+        self.name = name
+        with tf.variable_scope(self.name, initializer=tf.contrib.layers.xavier_initializer()):
+            self.W = {}
+            self.W["h"] = tf.get_variable("Wh", [raw_features+hidden_features, hidden_features])
+            self.W["i"] = tf.get_variable("Wi", [raw_features+hidden_features, hidden_features])
+            self.W["o"] = tf.get_variable("Wo", [raw_features+hidden_features, hidden_features])
+            self.W["f"] = tf.get_variable("Wf", [raw_features+hidden_features, hidden_features])
+            self.b = {}
+            self.b["h"] = tf.get_variable("bh", [1, hidden_features])
+            self.b["i"] = tf.get_variable("bi", [1, hidden_features])
+            self.b["o"] = tf.get_variable("bo", [1, hidden_features])
+            self.b["f"] = tf.get_variable("bf", [1, hidden_features])
+        return
+        
+    def transform(self, raw, cell, out):
+        """
+        raw : samples * raw_features
+        cell: samples * degree * hidden_features
+        out : samples * degree * hidden_features
+        """
+        samples = tf.shape(raw)[0]
+        raw_features = tf.shape(raw)[1]
+        degree = tf.shape(cell)[1]
+        hidden_features = tf.shape(cell)[2]
+        
+        x_concat = tf.reshape(raw, [samples, 1, raw_features])
+        x_concat = tf.tile(x_concat, [1, degree, 1])
+        x_concat = tf.concat([x_concat, out], 2)
+        x_concat = tf.reshape(x_concat, [samples*degree, raw_features+hidden_features])
+        
+        x_sum = tf.reduce_sum(out, 1)
+        x_sum = tf.concat([raw, x_sum], 1)
+        
+        h = tf.matmul(x_sum, self.W["h"]) + self.b["h"]
+        # h = tf.nn.relu(h)
+        h = tf.tanh(h)
+        
+        i = tf.matmul(x_sum, self.W["i"]) + self.b["i"]
+        i = tf.nn.sigmoid(i)
+        
+        o = tf.matmul(x_sum, self.W["o"]) + self.b["o"]
+        o = tf.nn.sigmoid(o)
+        
+        f = tf.matmul(x_concat, self.W["f"]) + self.b["f"]
+        f = tf.nn.sigmoid(f)
+        f = tf.reshape(f, [samples, degree, hidden_features])
+        
+        cell = tf.reduce_sum(f * cell, 1)
+        cell = i * h + cell
+        # out = o * tf.nn.relu(cell)
+        out = o * tf.tanh(cell)
+        return cell, out
+        """
+        O_cell = tf.reshape(hh_cell, [self.samples, 1, self.hidden_dimension])
+        O_out = tf.reshape(hh_out, [self.samples, 1, self.hidden_dimension])
+        O = tf.concat([O_cell, O_out], 1)
+        return O
+        """
+    def l2_loss(self):
+        l2_loss = tf.zeros(1)
+        for i in self.W.itervalues():
+            l2_loss += tf.nn.l2_loss(i)
+        for i in self.b.itervalues():
+            l2_loss += tf.nn.l2_loss(i)
+        return l2_loss
+        
 class Config(object):
     """ Store hyper parameters for tree models
     """
     
     def __init__(self):
+        self.name = "YOLO"
+    
         self.vocabulary_size = 5
         self.word_to_word_embeddings = 300
         
@@ -60,7 +164,7 @@ class RNN(object):
     From an input tree, it classifies each node and identifies positive spans and their labels.
     
     Instantiating an object of this class only defines a Tensorflow computation graph
-    under the name scope "RNN". Weights of a model instance reside in a Tensorflow session.
+    under the name scope config.name. Weights of a model instance reside in a Tensorflow session.
     """
 
     def __init__(self, config):
@@ -105,7 +209,7 @@ class RNN(object):
         
         # Create embedding dictionaries
         # We use one-hot character embeddings so no dictionary is needed
-        with tf.variable_scope("RNN", initializer=tf.random_normal_initializer(stddev=0.1)):
+        with tf.variable_scope(self.name, initializer=tf.random_normal_initializer(stddev=0.1)):
             self.L = tf.get_variable("L",
                 [self.vocabulary_size, self.word_to_word_embeddings])
             # self.C = tf.get_variable("C",
@@ -132,7 +236,7 @@ class RNN(object):
         """
         self.K = [None]
         self.character_embeddings = self.alphabet_size
-        with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
+        with tf.variable_scope(self.name, initializer=tf.contrib.layers.xavier_initializer()):
             for window in xrange(1, self.max_conv_window+1):
                 self.K.append(tf.get_variable("K%d" % window,
                                 [window, self.character_embeddings, 1, self.kernels*window]))
@@ -166,7 +270,7 @@ class RNN(object):
         self.b_x_mlp = []
         self.b_x_gate = []
         for layer in xrange(layers):
-            with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
+            with tf.variable_scope(self.name, initializer=tf.contrib.layers.xavier_initializer()):
                 self.W_x_mlp.append(tf.get_variable("W_x_mlp_%d" % layer,
                                             [self.character_to_word_embeddings,
                                              self.character_to_word_embeddings]))
@@ -175,7 +279,7 @@ class RNN(object):
                                              self.character_to_word_embeddings]))
                 self.b_x_mlp.append(tf.get_variable("b_x_mlp_%d" % layer,
                                             [1, self.character_to_word_embeddings]))
-            with tf.variable_scope("RNN",
+            with tf.variable_scope(self.name,
                         initializer=tf.random_normal_initializer(mean=-2, stddev=0.1)):
                 self.b_x_gate.append(tf.get_variable("b_x_gate_%d" % layer,
                                             [1, self.character_to_word_embeddings]))
@@ -214,23 +318,40 @@ class RNN(object):
         self.X = tf.nn.dropout(X, self.krX)
         
         # Mean embedding of leaf words
-        m = tf.slice(self.X, [0,0,0], [self.nodes, self.samples, self.word_dimension])
+        m = self.X[:,:,:self.word_dimension]
         self.m = tf.reduce_sum(m, axis=0) / tf.reshape(self.l, [self.samples, 1])
         return
-    
-    def create_phrase_embedding_layer(self):
-        """ Create a layer to compute embeddings for each phrase in lexicon
-        
-        Suppose there are four classes: per, org, loc, misc.
-        Then "Donald Rumsfeld" will have initial embedding: [1, 0, 0, 0]
-        Unsenn phrases will have dummy zero embeddings.
-        """
-        
-        Lex = tf.gather(self.L_phrase_hat, self.lex+1)
-        self.Lex = tf.reshape(Lex, [self.nodes, self.samples, self.phrases*self.phrase_embeddings])
-        return
-    
+
     def get_hidden_unit(self, name, degree):
+        """ Create a unit to compute the hidden features of one direction of a node
+        """
+        self.raw_features = (self.pos_dimension * self.poses 
+                           + self.word_dimension * (1+self.words)
+                           + self.lexicons)
+        
+        self.layer_dict[name] = []
+        for i in xrange(self.hidden_layers):
+            if i == 0:
+                input_dimension = degree*self.hidden_dimension + self.raw_features
+            else:
+                input_dimension = degree*self.hidden_dimension + self.hidden_dimension
+            with tf.variable_scope(self.name):
+                with tf.variable_scope(name):
+                    hidden_layer = Affine_Layer("H%d"%i, input_dimension, self.hidden_dimension)
+            self.layer_dict[name].append(hidden_layer)
+        
+        def hidden_unit(x, c):
+            h = x
+            ret = []
+            for i in xrange(self.hidden_layers):
+                h = tf.concat([h, c[:,i,:]], 1)
+                h = self.layer_dict[name][i].transform(h)
+                h = tf.nn.relu(h)
+                ret.append(h)
+            return tf.stack(ret, 1)
+        return hidden_unit
+        
+    def get_hidden_unit_backup(self, name, degree):
         """ Create a unit to compute the hidden features of one direction of a node
         """
         self.raw_features = (self.pos_dimension * self.poses 
@@ -239,7 +360,7 @@ class RNN(object):
                            
         self.W[name] = {}
         self.b[name] = {}
-        with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
+        with tf.variable_scope(self.name, initializer=tf.contrib.layers.xavier_initializer()):
             with tf.variable_scope(name):
                 for i in xrange(self.hidden_layers):
                     if i == 0:
@@ -261,14 +382,47 @@ class RNN(object):
             return tf.stack(ret, 1)
         return hidden_unit
         
-    def get_child_sum_lstm_unit(self, name, degree):
+    def get_child_sum_lstm_unit(self, name):
+        self.raw_features = (self.pos_dimension * self.poses 
+                           + self.word_dimension * (1+self.words)
+                           + self.lexicons)
+        
+        self.layer_dict[name] = []
+        for i in xrange(self.hidden_layers):
+            if i == 0:
+                input_dimension = self.raw_features
+            else:
+                input_dimension = self.hidden_dimension
+            with tf.variable_scope(self.name):
+                with tf.variable_scope(name):
+                    hidden_layer = Child_Sum_LSTM_Layer("H%d"%i, input_dimension, self.hidden_dimension)
+            self.layer_dict[name].append(hidden_layer)
+        
+        def hidden_unit(x, cell, out):
+            """
+            x: samples * raw_features
+            cell, out: samples * degree * layers * hidden_features
+            ret_cell, ret_out: samples * hidden_features
+            """
+            ret_out = x
+            ret_cell_list = []
+            ret_out_list = []
+            for i in xrange(self.hidden_layers):
+                ret_cell, ret_out = self.layer_dict[name][i].transform(
+                    ret_out, cell[:,:,i,:], out[:,:,i,:])
+                ret_cell_list.append(ret_cell)
+                ret_out_list.append(ret_out)
+            return tf.stack(ret_cell_list, 1), tf.stack(ret_out_list, 1)
+        return hidden_unit
+        
+    def get_child_sum_lstm_unit_backup(self, name, degree):
         self.raw_features = (self.pos_dimension * self.poses 
                            + self.word_dimension * (1+self.words)
                            + self.lexicons)
         self.input_dimension = self.raw_features + self.hidden_dimension
         self.W[name] = {}
         self.b[name] = {}
-        with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
+        with tf.variable_scope(self.name, initializer=tf.contrib.layers.xavier_initializer()):
             with tf.variable_scope(name):
                 self.W[name]["hh"] = tf.get_variable("W_hh",
                                         [self.input_dimension, self.hidden_dimension])
@@ -322,83 +476,88 @@ class RNN(object):
     def create_hidden_layer(self):
         """ Create a layer to compute hidden features for all nodes
         """
-        self.W = {}
-        self.b = {}
-        self.a = {}
-        #self.f_h_bottom = self.get_hidden_unit("hidden_bottom", self.degree)
+        self.layer_dict = {}
+        # self.f_h_bottom = self.get_hidden_unit("hidden_bottom", self.degree)
         self.f_h_bottom = self.get_hidden_unit("hidden_bottom", 1)
         self.f_h_top = self.get_hidden_unit("hidden_top", 1)
+        # self.f_h_bottom = self.get_child_sum_lstm_unit("hidden_bottom")
+        # self.f_h_bottom = self.get_child_sum_lstm_unit("hidden_top")
         
         # 2: one for LSTM memory cell, one for output
-        #H = tf.zeros([(1+self.nodes) * self.samples, 2, self.hidden_dimension])
+        # H = tf.zeros([(1+self.nodes) * self.samples, self.hidden_layers, 2, self.hidden_dimension])
         H = tf.zeros([(1+self.nodes) * self.samples, self.hidden_layers, self.hidden_dimension])
         
         # Bottom-up
         def bottom_condition(index, H):
             return index <= self.nodes-1
         def bottom_body(index, H):
-            p = tf.slice(self.P, [index,0,0], [1, self.samples, self.poses*self.pos_dimension])
-            x = tf.slice(self.X, [index,0,0], [1, self.samples, self.words*self.word_dimension])
-            lex = tf.slice(self.lex, [index,0,0], [1, self.samples, self.lexicons])
+            p = self.P[index,:,:]
+            x = self.X[index,:,:]
+            lex = self.lex[index,:,:]
             
-            t = tf.slice(self.T_hat, [index,0,self.neighbors], [1, self.samples, self.degree])
-            #c = tf.gather(H, t[0,:,:])
-            c = tf.reduce_sum(tf.gather(H, t[0,:,:]), axis=1)
+            t = self.T_hat[index,:,self.neighbors:self.neighbors+self.degree]
+            # c = tf.gather(H, t)
+            c = tf.reduce_sum(tf.gather(H, t), axis=1)
             
-            raw = tf.concat([self.m, p[0,:,:], x[0,:,:], lex[0,:,:]], 1)
-            #h = self.f_h_bottom(raw, c[:,:,0,:], c[:,:,1,:])
+            raw = tf.concat([self.m, p, x, lex], 1)
             h = self.f_h_bottom(raw, c)
+            # h1, h2 = self.f_h_bottom(raw, c[:,:,:,0,:], c[:,:,:,1,:])
+            # h = tf.stack([h1, h2], 2)
+            
             h = tf.nn.dropout(h, self.krH)
             
-            h_upper = tf.zeros([(1+index)*self.samples, self.hidden_layers, self.hidden_dimension])
+            h_upper = tf.zeros([           (1+index)*self.samples, self.hidden_layers, self.hidden_dimension])
             h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_layers, self.hidden_dimension])
-            return index+1, H+tf.concat(axis=0, values=[h_upper, h, h_lower])
+            # h_upper = tf.zeros([(1+index)*self.samples, self.hidden_layers, 2, self.hidden_dimension])
+            # h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_layers, 2, self.hidden_dimension])
+            H_hat = H+tf.concat([h_upper, h, h_lower], 0)
+            return index+1, H_hat
         _, H_bottom = tf.while_loop(bottom_condition, bottom_body, [tf.constant(0), H], parallel_iterations=1)
         
         # Top-down
         def top_condition(index, H):
             return index >= 0
         def top_body(index, H):
-            p = tf.slice(self.P, [index,0,0], [1, self.samples, self.poses*self.pos_dimension])
-            x = tf.slice(self.X, [index,0,0], [1, self.samples, self.words*self.word_dimension])
-            lex = tf.slice(self.lex, [index,0,0], [1, self.samples, self.lexicons])
+            p = self.P[index,:,:]
+            x = self.X[index,:,:]
+            lex = self.lex[index,:,:]
             
-            t = tf.slice(self.T_hat, [index,0,3], [1, self.samples, 1])
-            #c = tf.gather(H, t[0,:,:])
-            c = tf.gather(H, t[0,:,0])
+            t = self.T_hat[index,:,3]
+            # t = self.T_hat[index,:,3:4]
+            c = tf.gather(H, t)
             
-            raw = tf.concat([self.m, p[0,:,:], x[0,:,:], lex[0,:,:]], 1)
-            #h = self.f_h_top(raw, c[:,:,0,:], c[:,:,1,:])
+            raw = tf.concat([self.m, p, x, lex], 1)
             h = self.f_h_top(raw, c)
+            # h1, h2 = self.f_h_bottom(raw, c[:,:,:,0,:], c[:,:,:,1,:])
+            # h = tf.stack([h1, h2], 2)
+            
             h = tf.nn.dropout(h, self.krH)
             
-            h_upper = tf.zeros([(1+index)*self.samples, self.hidden_layers, self.hidden_dimension])
+            h_upper = tf.zeros([           (1+index)*self.samples, self.hidden_layers, self.hidden_dimension])
             h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_layers, self.hidden_dimension])
-            return index-1, H+tf.concat(axis=0, values=[h_upper, h, h_lower])
+            # h_upper = tf.zeros([(1+index)*self.samples, self.hidden_layers, 2, self.hidden_dimension])
+            # h_lower = tf.zeros([(self.nodes-1-index)*self.samples, self.hidden_layers, 2, self.hidden_dimension])
+            H_hat = H+tf.concat([h_upper, h, h_lower], 0)
+            return index-1, H_hat
         _, H_top = tf.while_loop(top_condition, top_body, [self.nodes-1, H], parallel_iterations=1)
         #_, H_top = tf.while_loop(top_condition, top_body, [self.nodes-1, H_bottom])
         
-        #self.H = H_bottom[:,1,:] + H_top[:,1,:]
+        # self.H = H_bottom[:,self.hidden_layers-1,:]
         self.H = H_bottom[:,self.hidden_layers-1,:] + H_top[:,self.hidden_layers-1,:]
-        #self.H = tf.concat(axis=1, values=[H_bottom, H_top])
+        # self.H = H_bottom[:,self.hidden_layers-1,1,:] + H_top[:,self.hidden_layers-1,1,:]
         return
     
     def get_output_unit(self, name):
         """ Create a unit to compute the class scores of a node
         """
-        self.W[name] = {}
-        self.b[name] = {}
-        with tf.variable_scope("RNN", initializer=tf.contrib.layers.xavier_initializer()):
+        with tf.variable_scope(self.name):
             with tf.variable_scope(name):
-                self.W[name]["o"] = tf.get_variable("W_o",
-                                        [self.hidden_dimension * 3,
-                                         self.output_dimension])
-                self.b[name]["o"] = tf.get_variable("b_o", [1, self.output_dimension])
-            
+                self.layer_dict[name] = Affine_Layer("O", self.hidden_dimension*3, self.output_dimension)
+                
         def output_unit(H):
             H = tf.gather(H, self.T_hat[:,:,:3])
             H = tf.reshape(H, [self.nodes * self.samples, self.hidden_dimension * 3])
-            O = tf.matmul(H, self.W[name]["o"]) + self.b[name]["o"]
+            O = self.layer_dict[name].transform(H)
             return O
         return output_unit
     
@@ -559,10 +718,9 @@ class RNN(object):
         _, e, y, f, T, p, x, w, lex, l, _ = self.get_batch_input(tree_pyramid_list)
         
         loss, _ = self.sess.run([self.loss, self.update_op],
-                    feed_dict={self.e: e, self.y: y, self.f: f, self.T: T,
-                               self.p: p, self.x: x, self.w: w, self.lex: lex, self.l: l,
-                               self.krP: self.keep_rate_P, self.krX: self.keep_rate_X,
-                               self.krH: self.keep_rate_H})
+                    feed_dict={self.e:e, self.y:y, self.f:f, self.T:T,
+                               self.p:p, self.x:x, self.w:w, self.lex:lex, self.l:l,
+                               self.krP:self.keep_rate_P, self.krX:self.keep_rate_X, self.krH:self.keep_rate_H})
         return loss
     
     def predict(self, tree_pyramid_list):
@@ -573,10 +731,9 @@ class RNN(object):
         N, e, _, f, T, p, x, w, lex, l, r = self.get_batch_input(tree_pyramid_list)
         
         y_hat = self.sess.run(self.y_hat,
-                    feed_dict={self.f: f, self.T: T, 
-                               self.p: p, self.x: x, self.w: w, self.lex: lex, self.l: l,
-                               self.krP: 1.0, self.krX: 1.0,
-                               self.krH: 1.0})
+                    feed_dict={self.f:f, self.T:T, 
+                               self.p:p, self.x:x, self.w:w, self.lex:lex, self.l:l,
+                               self.krP:1.0, self.krX:1.0, self.krH:1.0})
         
         def parse_output(node_index, sample_index, span_y, uncovered_token_set):
             node = N[node_index][sample_index]
@@ -629,8 +786,9 @@ def main():
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
         L = sess.run(model.L)
-        print L
-        print tf.trainable_variables()
+        print L.shape
+        for v in tf.trainable_variables():
+            print v
     return
     
 if __name__ == "__main__":

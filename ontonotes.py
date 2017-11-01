@@ -233,14 +233,17 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
     # Process pos info
     node.pos_index = pos_to_index[pos]
     pos_count[pos] += 1
+    node.pos = pos #YOLO
     
     # Process word info
     node.word_split = [character_to_index[character] for character in word] if word else []
     node.word_index = word_to_index[word] if word else -1
+    node.word = word if word else "" # YOLO
     
     # Process head info
     node.head_split = [character_to_index[character] for character in head]
     node.head_index = word_to_index[head]
+    node.head = head # YOLO
     
     # Process ne info
     node.under_ne = under_ne
@@ -260,6 +263,7 @@ def construct_node(node, tree, ner_raw_data, head_raw_data, text_raw_data,
         """
     # Process span info
     node.span = span
+    node.span_length = span[1] - span[0]
     span_to_node[span] = node
     
     # Process lexicon info
@@ -318,6 +322,7 @@ def create_dense_nodes(ner_raw_data, text_raw_data, pos_to_index, lexicon_list,
             node = Node(family=1)
             node_list.append(node)
             node.span = span
+            node.span_length = span_length
             span_to_node[span] = node
             node.child_list = [span_to_node[(span[0],span[1]-1)], span_to_node[(span[0]+1,span[1])]]
             
@@ -382,6 +387,7 @@ def get_tree_data(raw_data, character_to_index, word_to_index, pos_to_index, lex
                    character_to_index, word_to_index, pos_to_index, lexicon_list,
                    pos_count, ne_count, pos_ne_count, lexicon_hits, span_to_node, False)
                 root_node.nodes = nodes
+                root_node.text_raw_data = text_raw_data #YOLO
                 
                 additional_node_list = []
                 """
