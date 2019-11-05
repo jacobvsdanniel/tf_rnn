@@ -75,9 +75,7 @@ python evaluate.py -h
 ## References
 The high-level description of the project and the evaluation results can be found in [1](#leveraging-linguistic-structures-for-named-entity-recognition-with-bidirectional-recursive-neural-networks).
 
-### Leveraging Linguistic Structures for Named Entity Recognition with Bidirectional Recursive Neural Networks
-
-[1] PH Li, RP Dong, YS Wang, JC Chou, WY Ma, [*Leveraging Linguistic Structures for Named Entity Recognition with Bidirectional Recursive Neural Networks*](http://aclweb.org/anthology/D/D17/D17-1281.pdf)
+[1] PH Li, RP Dong, YS Wang, JC Chou, WY Ma, [*Leveraging Linguistic Structures for Named Entity Recognition with Bidirectional Recursive Neural Networks*](https://www.aclweb.org/anthology/D17-1282/)
 
 ```
 @InProceedings{li-EtAl:2017:EMNLP20177,
